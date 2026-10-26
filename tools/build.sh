@@ -16,3 +16,4 @@ python3 check.py | tail -1          # 강의 코드 블록이 빠짐없이 들�
 python3 pdfsel.py > /dev/null
 sed -i "s|^ROOT=.*|ROOT='$(dirname "$T")'|" gen.py
 python3 gen.py
+node "$T"/check_answers.js        # 양식 정답이 문제마다 하나씩 붙는지 확인
