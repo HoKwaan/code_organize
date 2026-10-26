@@ -136,6 +136,7 @@ details.toc > summary { cursor: pointer; color: var(--muted); }
 .tag.k-quiz { background: #f1e6ff; color: #6a3fb0; }
 .tag.k-src { background: #e3f6ea; color: #16683a; }
 .tag.k-pdf { background: #ffe6e6; color: #a12a2a; }
+.tag.k-table { background: #e3f3f8; color: #1d6178; }
 .tag.k-ref { background: #e6eefc; color: #2a4fa1; }
 ol.refs { margin: 4px 0; padding-left: 2.6em; line-height: 1.7; }
 .tag.k-inline { background: var(--code-bg); color: var(--muted); }

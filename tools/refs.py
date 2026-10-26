@@ -47,7 +47,7 @@ def candidates(sn):
     for x in sn:
         if x.get('kind') == 'ref':
             continue
-        text = x.get('kind') in ('quiz', 'inline')
+        text = x.get('kind') in ('quiz', 'inline', 'table')
         code = (x.get('answer') or x.get('code', '')) if x.get('kind') == 'quiz' else x.get('code', '')
         for i, l in enumerate(code.split('\n')):
             s = l.strip()
@@ -79,7 +79,7 @@ def find(cands, line, subj):
             continue
         if x['subject'] != subj and 'mcu' in (subj, x['subject']):
             continue                              # MCU(Arduino) 와 Linux · EIO(C) 는 같은 이름이라도 다른 API
-        text = x.get('kind') in ('quiz', 'inline')
+        text = x.get('kind') in ('quiz', 'inline')    # 표는 함수 이름만으로는 안 되고 호출 모양이 있어야 한다
         if arrlen:
             if not ARRLEN.search(c):
                 continue
@@ -91,7 +91,8 @@ def find(cands, line, subj):
                 continue
         extra = len({t for t in re.findall(r'\b[A-Z][A-Z0-9_]{2,}\b', c)} - {k for k, _ in ks})
         stmt = text or bool(re.search(r'[;{})]$', c))     # 한 문장으로 끝나는 줄을 먼저
-        score = (miss > 0, x['subject'] != subj, KIND_RANK.get(x.get('kind'), 2), not stmt, extra, len(s))
+        rank = 4 if x.get('kind') == 'table' or '-md-' in x['id'] else KIND_RANK.get(x.get('kind'), 2)   # 표 · md 판은 다른 데 없을 때만
+        score = (miss > 0, x['subject'] != subj, rank, not stmt, extra, len(s))
         if best is None or score < best[0]:
             best = (score, s, x, i)
     return best
@@ -128,6 +129,6 @@ def build(sn, supp):
         if miss:
             out.append(dict(id=f'{subj}-ref-{n}', subject=subj, day=0, period=0, topic='API 모음', kind='ref',
                             title=f'보충 · {name} (강의 자료에 없음)', lang=lang,
-                            source='보충 — 14개 강의 페이지 · src · MCU PDF 어디에도 없는 표준 API',
+                            source='보충 — 14개 강의 페이지 · src · PDF 슬라이드 · md 어디에도 없는 표준 API',
                             code='\n'.join(miss)))
     return out

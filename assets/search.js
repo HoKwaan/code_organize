@@ -349,6 +349,7 @@
       const anc = q.blanks ? anchorScore(q, r.match, line) : 0;
       let total = s + 0.6 * anc + 0.25 * hint + 0.15 * (ctxScore.get(line.si) || 0);
       if (INDEX.snippets[line.si].kind === 'exam') total *= 0.7;   // 시험지 자신의 줄은 정리본이 없을 때만 앞에 오게
+      else if (INDEX.snippets[line.si].kind === 'table') total *= 0.85;   // 표의 행은 같은 점수의 코드 줄 뒤로
       hits.push({ line, s, hint, total, match: r.match });
     }
     hits.sort((a, b) => b.total - a.total);
@@ -404,7 +405,7 @@
     const idTotal = idW.reduce((a, b) => a + b, 0) || 1;
     const res = [];
     for (const sn of snippetPool) {
-      if (sn.kind === 'quiz' || sn.kind === 'exam') continue;
+      if (sn.kind === 'quiz' || sn.kind === 'exam' || sn.kind === 'table') continue;   // TODO 는 코드로 채운다
       let hit = 0;
       ids.forEach((t, i) => { if (sn._idents.has(t)) hit += idW[i]; });
       const s = (ids.length ? 0.7 * hit / idTotal : 0) + 0.5 * gramSim(grams, sn._grams) + 0.2 * (ctxScore.get(sn._si) || 0);

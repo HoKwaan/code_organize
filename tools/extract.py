@@ -181,7 +181,9 @@ def parse_lecture(subject, day, rel):
         pnum = int(n.group(1)) if n else 0
         # walk tokens in order
         tok_re = re.compile(
-            r'<h3[^>]*>(?P<h3>.*?)</h3>'
+            r'<table[^>]*>(?P<table>.*?)</table>'
+            r'|<svg[^>]*>(?P<svg>.*?)</svg>'
+            r'|<h3[^>]*>(?P<h3>.*?)</h3>'
             r'|<h4[^>]*id="(?P<h4id>[^"]*)"[^>]*>(?P<h4>.*?)</h4>'
             r'|<h4[^>]*>(?P<h4b>.*?)</h4>'
             r'|<details[^>]*>(?P<dopen>)'
@@ -195,9 +197,21 @@ def parse_lecture(subject, day, rel):
         inline = []
         quiz = {}          # 괄호 넣기 id -> {'title', 'q': [...], 'a': [...]}
         blocks = []
+        tables = []        # [{'heading', 'desc', 'rows': [[셀, ...], ...]}]
+        prose = []         # 본문 · 그림 글자 (코드 태그 밖) — 함수 이름 같은 코드 조각을 찾는다
         for t in tok_re.finditer(sec):
             g = t.groupdict()
-            if g['h3'] is not None:
+            if g['table'] is not None:
+                rows = [[clean_inline(c) for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, re.S)]
+                        for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', g['table'], re.S)]
+                rows = [r for r in rows if any(r)]
+                if rows:
+                    tables.append(dict(heading=heading, desc=last_p, rows=rows))
+                for c in re.findall(r'<code[^>]*>(.*?)</code>', g['table'], re.S):
+                    inline.append(clean_inline(c))
+            elif g['svg'] is not None:
+                prose.extend(html.unescape(re.sub(r'<[^>]+>', '', x)) for x in re.findall(r'<text[^>]*>(.*?)</text>', g['svg'], re.S))
+            elif g['h3'] is not None:
                 heading = clean_inline(g['h3']).lstrip('▶ ').strip(); fill_id = None; last_p = ''
             elif g['h4'] is not None:
                 heading = clean_inline(g['h4']).lstrip('✏️ ').strip(); fill_id = g['h4id']; last_p = ''
@@ -220,8 +234,11 @@ def parse_lecture(subject, day, rel):
                 if fill_id and fill_id.startswith('p'):
                     qz = quiz.setdefault(fill_id, dict(title=heading, q=[], a=[]))
                     (qz['a'] if in_details else qz['q']).append(clean_inline(g['li']))
+                else:
+                    prose.append(clean_inline(re.sub(r'<code[^>]*>.*?</code>', ' ', g['li'], flags=re.S)))
             elif g['p'] is not None:
                 txt = clean_inline(g['p'])
+                prose.append(clean_inline(re.sub(r'<code[^>]*>.*?</code>', ' ', g['p'], flags=re.S)))
                 # inline <code> inside paragraphs
                 for c in re.findall(r'<code[^>]*>(.*?)</code>', g['p'], re.S):
                     inline.append(clean_inline(c))
@@ -229,90 +246,243 @@ def parse_lecture(subject, day, rel):
                     last_p = txt
             elif g['code'] is not None:
                 inline.append(clean_inline(g['code']))
-        items.append(dict(sid=sid, period=period, pnum=pnum, ltitle=ltitle, blocks=blocks, inline=inline, quiz=quiz))
+        items.append(dict(sid=sid, period=period, pnum=pnum, ltitle=ltitle, blocks=blocks, inline=inline, quiz=quiz,
+                          tables=tables, prose=prose))
     return doc_title, items
+
+
+def section_snippets(subject, day, sec, url, snippets, tag='', label='강의'):
+    """한 교시(section)의 코드 블록 · 빈칸 · 표 · 본문 코드 · 괄호 넣기를 snippets 에 더한다. 더한 블록 수를 돌려준다."""
+    cnt = 0
+    topic = f'Day {day} · {sec["period"]} {sec["ltitle"]}' if sec['pnum'] else f'Day {day} · 개요'
+    blocks = sec['blocks']
+    # pair fill questions with their answers
+    i = 0
+    k = 0
+    while i < len(blocks):
+        b = blocks[i]
+        lang = guess_lang(b['cls'], b['code'], subject)
+        k += 1
+        sid = f'{subject}-d{day}-{tag}{sec["sid"]}-{k}'
+        base = dict(id=sid, subject=subject, day=day, period=sec['pnum'], topic=topic,
+                    source=f'{subject.upper() if subject!="eio" else "Embedded_IO"} Day {day} {label} · {sec["period"]}',
+                    url=f'{url}#{sec["sid"]}', lang=lang)
+        if lang == 'text':
+            # expected output → attach to previous code snippet
+            prev = next((x for x in reversed(snippets) if x.get('_sec') == (subject, day, tag + sec['sid'])), None)
+            if prev is not None and not b['answer']:
+                prev['output'] = (prev.get('output', '') + ('\n\n' if prev.get('output') else '') + b['code'])
+                cnt += 1
+                i += 1
+                continue
+        if b['fill'] and not b['answer']:
+            # collect answers that follow in details with same fill id
+            ans = [x for x in blocks[i + 1:] if x['fill'] == b['fill'] and x['answer']]
+            ans_code = '\n'.join(x['code'] for x in ans)
+            filled, nf, nb = fill_from_answer(b['code'], ans_code) if BLANK in b['code'] else (b['code'], 0, 0)
+            snippets.append(dict(base, title=b['heading'], kind='fill', desc=b['desc'],
+                                 blank=b['code'], answer=ans_code, code=filled if nb else b['code'],
+                                 filled=f'{nf}/{nb}', _sec=(subject, day, tag + sec['sid'])))
+            cnt += 1 + len(ans)
+            i += 1
+            continue
+        if b['fill'] and b['answer']:
+            # answer already attached to its question; keep extra answer code (e.g. answer without question)
+            q = next((x for x in snippets if x.get('_sec') == (subject, day, tag + sec['sid']) and x.get('kind') == 'fill' and x['title'] == b['heading']), None)
+            if q is not None:
+                i += 1
+                continue
+        snippets.append(dict(base, title=b['heading'] + (' (정답)' if b['answer'] else ''), desc=b['desc'],
+                             code=b['code'], _sec=(subject, day, tag + sec['sid'])))
+        cnt += 1
+        i += 1
+    # tables (표) — 강의 본문의 표를 한 줄에 한 행씩 ' | ' 로 이어서
+    for n, tb in enumerate(sec.get('tables', []), 1):
+        same = sum(1 for x in sec['tables'][:n] if x['heading'] == tb['heading'])
+        snippets.append(dict(id=f'{subject}-d{day}-{tag}{sec["sid"]}-t{n}', subject=subject, day=day, period=sec['pnum'],
+                             topic=topic, title=f'표 · {tb["heading"]}' + (f' ({same})' if same > 1 else ''), kind='table',
+                             desc=tb['desc'], source=f'Day {day} {label} · {sec["period"]} 표', url=f'{url}#{sec["sid"]}',
+                             lang='text', code='\n'.join(' | '.join(r) for r in tb['rows']), _sec=(subject, day, tag + sec['sid'])))
+    cnt += len(sec.get('tables', []))
+    # inline code collection
+    seen, inl = set(), []
+    for c in sec['inline']:
+        if len(c) < 2 or c in seen:
+            continue
+        seen.add(c)
+        inl.append(c)
+    if inl:
+        snippets.append(dict(id=f'{subject}-d{day}-{tag}{sec["sid"]}-inline', subject=subject, day=day, period=sec['pnum'],
+                             topic=topic, title='본문 속 코드 · 명령어', kind='inline',
+                             source=f'Day {day} {label} · {sec["period"]} 본문', url=f'{url}#{sec["sid"]}',
+                             lang='text', code='\n'.join(inl), _sec=(subject, day, tag + sec['sid'])))
+    for qid, qz in sec['quiz'].items():
+        lines = []
+        for n, q in enumerate(qz['q']):
+            a = qz['a'][n] if n < len(qz['a']) else ''
+            vals = [v.strip() for v in re.split(r'\s+/\s+', a)] if a else []
+            if q.count(BLANK) and len(vals) == q.count(BLANK):
+                it = iter(vals)
+                filled = re.sub(BLANK, lambda _: '[' + next(it) + ']', q)
+            else:
+                filled = q + (f'   → 정답: {a}' if a else '')
+            lines.append(f'{n + 1}. {filled}')
+        snippets.append(dict(id=f'{subject}-d{day}-{tag}{sec["sid"]}-{qid}', subject=subject, day=day, period=sec['pnum'],
+                             topic=topic, title=qz['title'], kind='quiz', lang='text',
+                             source=f'Day {day} {label} · {sec["period"]} 괄호 넣기', url=f'{url}#{qid}',
+                             blank='\n'.join(f'{n + 1}. {q}' for n, q in enumerate(qz['q'])),
+                             answer='\n'.join(f'{n + 1}. {a}' for n, a in enumerate(qz['a'])),
+                             code='\n'.join(lines)))
+    return cnt
+
+
+MD_FILES = [('mcu', d, f'MCU-day{d}/MCU_Day{d}_lecture.md') for d in (1, 2, 3)]
+
+
+def md_inline(t):
+    """마크다운 한 줄 → 글자만 (강조 · 링크 · 백틱을 뗀다)."""
+    t = re.sub(r'!\[[^\]]*\]\([^)]*\)|</?(?:img|br|details|summary|a|b|strong|em|span|div|p|sup|sub|kbd)\b[^>]*>', '', t)
+    t = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', t)
+    return re.sub(r'\s+', ' ', t.replace('**', '').replace('`', '')).strip()
+
+
+def parse_md(path):
+    """MCU_DayN_lecture.md 를 parse_lecture 와 같은 모양(교시별 blocks · tables · inline · quiz)으로 읽는다."""
+    lines = open(path, encoding='utf-8').read().replace('\r', '').split('\n')
+    new = lambda sid, period, pnum, t: dict(sid=sid, period=period, pnum=pnum, ltitle=t, blocks=[], inline=[], quiz={}, tables=[], prose=[])
+    sec = new('intro', '개요', 0, '개요')
+    items = [sec]
+    heading, fill_id, in_details, last_p = '개요', None, False, ''
+    i = 0
+    while i < len(lines):
+        l = lines[i]
+        i += 1
+        m = re.match(r'# (\d+)\s*교시\s*·\s*(.*?)\s*(\(\d\d:\d\d[^)]*\))?\s*$', l)
+        if m:
+            sec = new(f'sec{m.group(1)}', f'{m.group(1)}교시', int(m.group(1)), m.group(2))
+            items.append(sec)
+            heading, fill_id, last_p = sec['ltitle'], None, ''
+        elif l.startswith(('# ', '## ', '### ')):
+            heading, fill_id, last_p = md_inline(l.lstrip('# ')).lstrip('▶⚙️🛠 ').strip(), None, ''
+        elif l.startswith('#### '):
+            heading, last_p = md_inline(l[5:]).lstrip('✏️ ').strip(), ''
+            m = re.search(r'(빈칸 채우기|괄호 넣기)\s*([\d-]+)', heading)
+            fill_id = ('f' if m.group(1) == '빈칸 채우기' else 'p') + m.group(2) if m else None
+        elif l.startswith('<details'):
+            in_details = True
+        elif l.startswith('</details'):
+            in_details = False
+        elif l.startswith('```'):
+            cls = 'language-' + l[3:].strip() if l[3:].strip() else ''
+            body = []
+            while i < len(lines) and not lines[i].startswith('```'):
+                body.append(lines[i].rstrip())
+                i += 1
+            i += 1
+            sec['blocks'].append(dict(heading=heading, fill=fill_id, answer=in_details, cls=cls,
+                                      code='\n'.join(body).replace(SHOW_BLANK, BLANK).rstrip('\n'), desc=last_p))
+        elif l.startswith('|'):
+            rows = []
+            i -= 1
+            while i < len(lines) and lines[i].startswith('|'):
+                cells = [md_inline(c) for c in lines[i].strip().strip('|').split('|')]
+                if not all(re.fullmatch(r':?-+:?', c) for c in cells):
+                    rows.append(cells)
+                sec['inline'] += [re.sub(r'\s+', ' ', c).strip() for c in re.findall(r'`([^`]+)`', lines[i])]
+                i += 1
+            sec['tables'].append(dict(heading=heading, desc=last_p, rows=rows))
+        elif l.strip():
+            sec['inline'] += [re.sub(r'\s+', ' ', c).strip() for c in re.findall(r'`([^`]+)`', l)]
+            m = re.match(r'\s*\d+\.\s+(.*)', l)
+            if m and fill_id and fill_id.startswith('p'):
+                qz = sec['quiz'].setdefault(fill_id, dict(title=heading, q=[], a=[]))
+                q = m.group(1) if in_details else re.sub(r'\(\s*　+\s*\)|\(\S[^()]*\s/\s[^()]*\S\)', BLANK, m.group(1))   # ( ) 빈칸 · (가 / 나) 고르기
+                (qz['a'] if in_details else qz['q']).append(md_inline(q))
+            else:
+                txt = md_inline(re.sub(r'`[^`]*`', ' ', l.lstrip('-*> ')))
+                sec['prose'].append(txt)
+                if not l.startswith('<'):
+                    last_p = md_inline(l.lstrip('-*> '))
+    return [s for s in items if s['blocks'] or s['tables'] or s['quiz'] or s['inline']]
+
+
+def norm_line(l):
+    return re.sub(r'\s+', '', l)
+
+
+def md_snippets(snippets):
+    """강의 md 판에만 있는 내용 (HTML 강의와 다른 코드 · 빈칸 · 괄호 넣기 · 표) 을 더한다."""
+    have = {norm_line(l) for x in snippets for k in ('code', 'blank', 'answer', 'output') for l in x.get(k, '').split('\n')}
+
+    def is_new(x):
+        if x.get('kind') in ('quiz', 'table'):
+            ls = x['code'].split('\n') if x['kind'] == 'table' else re.sub(r'\[|\]', '', x['code']).split('\n')
+            ls = [re.sub(r'^\d+\.\s*', '', l) for l in ls]
+            pool = have if x['kind'] == 'table' else {re.sub(r'^\d+\.|\[|\]', '', h) for h in have}
+            return any(norm_line(l) and norm_line(l) not in pool for l in ls)
+        if x.get('kind') == 'inline':
+            return False
+        ls = '\n'.join(x.get(k, '') for k in ('code', 'blank', 'answer')).split('\n')
+        return any(norm_line(l) not in have for l in ls if l.strip() and not l.strip().startswith(('//', '#', '/*')) or l.strip().startswith('#include'))
+
+    for subject, day, rel in MD_FILES:
+        path = os.path.join(AIC, rel)
+        if not os.path.exists(path):
+            continue
+        url = f'https://github.com/imguru-mooc/AI_CAMPUS/blob/main/{rel}'
+        got = []
+        for sec in parse_md(path):
+            section_snippets(subject, day, sec, url, got, tag='md-', label='강의 md(이전 판)')
+        for x in got:
+            if is_new(x):
+                x['title'] = x['title'] + ' — md 판에만 있음'
+                snippets.append(x)
+
+
+CALL_RX = re.compile(r'(?<![\w.])([A-Za-z_]\w*)\(([ -~]{0,40}?)\)')
+CONST_RX = re.compile(r'\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b')
+PATH_RX = re.compile(r'(?<![\w.])/(?:dev|sys|proc|boot|etc)/[\w./:*-]*\w')
+
+
+def prose_code(snippets, secs_all):
+    """코드 태그 없이 본문 · 그림 글자에만 나온 함수 호출 · 상수 · 경로를 그 교시의 '본문 속 코드' 에 더한다."""
+    text = '\n'.join(x.get(k, '') for x in snippets for k in ('code', 'blank', 'answer', 'output'))
+    have = norm_line(text)
+    calls = set(re.findall(r'(?<![\w.])([A-Za-z_]\w*)\s*\(', text))
+    by_id = {x['id']: x for x in snippets}
+    for subject, day, url, sec in secs_all:
+        found = []
+        for t in sec['prose']:
+            for m in CALL_RX.finditer(t):
+                name, args = m.group(1), m.group(2)
+                if '_' in name or (name[0].islower() and name in calls and len(name) > 3 and args.strip()):
+                    found.append(m.group(0))
+            found += CONST_RX.findall(t) + PATH_RX.findall(t)
+        found = [c for c in dict.fromkeys(found) if norm_line(c) not in have]
+        if not found:
+            continue
+        sid = f'{subject}-d{day}-{sec["sid"]}-inline'
+        if sid in by_id:
+            by_id[sid]['code'] += '\n' + '\n'.join(found)
+        else:
+            topic = f'Day {day} · {sec["period"]} {sec["ltitle"]}' if sec['pnum'] else f'Day {day} · 개요'
+            x = dict(id=sid, subject=subject, day=day, period=sec['pnum'], topic=topic, title='본문 속 코드 · 명령어', kind='inline',
+                     source=f'Day {day} 강의 · {sec["period"]} 본문', url=f'{url}#{sec["sid"]}', lang='text', code='\n'.join(found))
+            snippets.append(x)
+            by_id[sid] = x
 
 
 def build():
     snippets = []
     stats = {}
+    secs_all = []
     for subject, day, rel in LECTURES:
         doc_title, secs = parse_lecture(subject, day, rel)
         url = f'https://imguru-mooc.github.io/AI_CAMPUS/{rel}'
-        cnt = 0
-        for sec in secs:
-            topic = f'Day {day} · {sec["period"]} {sec["ltitle"]}' if sec['pnum'] else f'Day {day} · 개요'
-            blocks = sec['blocks']
-            # pair fill questions with their answers
-            i = 0
-            k = 0
-            while i < len(blocks):
-                b = blocks[i]
-                lang = guess_lang(b['cls'], b['code'], subject)
-                k += 1
-                sid = f'{subject}-d{day}-{sec["sid"]}-{k}'
-                base = dict(id=sid, subject=subject, day=day, period=sec['pnum'], topic=topic,
-                            source=f'{subject.upper() if subject!="eio" else "Embedded_IO"} Day {day} 강의 · {sec["period"]}',
-                            url=f'{url}#{sec["sid"]}', lang=lang)
-                if lang == 'text':
-                    # expected output → attach to previous code snippet
-                    prev = next((x for x in reversed(snippets) if x.get('_sec') == (subject, day, sec['sid'])), None)
-                    if prev is not None and not b['answer']:
-                        prev['output'] = (prev.get('output', '') + ('\n\n' if prev.get('output') else '') + b['code'])
-                        cnt += 1
-                        i += 1
-                        continue
-                if b['fill'] and not b['answer']:
-                    # collect answers that follow in details with same fill id
-                    ans = [x for x in blocks[i + 1:] if x['fill'] == b['fill'] and x['answer']]
-                    ans_code = '\n'.join(x['code'] for x in ans)
-                    filled, nf, nb = fill_from_answer(b['code'], ans_code) if BLANK in b['code'] else (b['code'], 0, 0)
-                    snippets.append(dict(base, title=b['heading'], kind='fill', desc=b['desc'],
-                                         blank=b['code'], answer=ans_code, code=filled if nb else b['code'],
-                                         filled=f'{nf}/{nb}', _sec=(subject, day, sec['sid'])))
-                    cnt += 1 + len(ans)
-                    i += 1
-                    continue
-                if b['fill'] and b['answer']:
-                    # answer already attached to its question; keep extra answer code (e.g. answer without question)
-                    q = next((x for x in snippets if x.get('_sec') == (subject, day, sec['sid']) and x.get('kind') == 'fill' and x['title'] == b['heading']), None)
-                    if q is not None:
-                        i += 1
-                        continue
-                snippets.append(dict(base, title=b['heading'] + (' (정답)' if b['answer'] else ''), desc=b['desc'],
-                                     code=b['code'], _sec=(subject, day, sec['sid'])))
-                cnt += 1
-                i += 1
-            # inline code collection
-            seen, inl = set(), []
-            for c in sec['inline']:
-                if len(c) < 2 or c in seen:
-                    continue
-                seen.add(c)
-                inl.append(c)
-            if inl:
-                snippets.append(dict(id=f'{subject}-d{day}-{sec["sid"]}-inline', subject=subject, day=day, period=sec['pnum'],
-                                     topic=topic, title='본문 속 코드 · 명령어', kind='inline',
-                                     source=f'Day {day} 강의 · {sec["period"]} 본문', url=f'{url}#{sec["sid"]}',
-                                     lang='text', code='\n'.join(inl), _sec=(subject, day, sec['sid'])))
-            for qid, qz in sec['quiz'].items():
-                lines = []
-                for n, q in enumerate(qz['q']):
-                    a = qz['a'][n] if n < len(qz['a']) else ''
-                    vals = [v.strip() for v in re.split(r'\s+/\s+', a)] if a else []
-                    if q.count(BLANK) and len(vals) == q.count(BLANK):
-                        it = iter(vals)
-                        filled = re.sub(BLANK, lambda _: '[' + next(it) + ']', q)
-                    else:
-                        filled = q + (f'   → 정답: {a}' if a else '')
-                    lines.append(f'{n + 1}. {filled}')
-                snippets.append(dict(id=f'{subject}-d{day}-{sec["sid"]}-{qid}', subject=subject, day=day, period=sec['pnum'],
-                                     topic=topic, title=qz['title'], kind='quiz', lang='text',
-                                     source=f'Day {day} 강의 · {sec["period"]} 괄호 넣기', url=f'{url}#{qid}',
-                                     blank='\n'.join(f'{n + 1}. {q}' for n, q in enumerate(qz['q'])),
-                                     answer='\n'.join(f'{n + 1}. {a}' for n, a in enumerate(qz['a'])),
-                                     code='\n'.join(lines)))
-        stats[rel] = cnt
+        stats[rel] = sum(section_snippets(subject, day, sec, url, snippets) for sec in secs)
+        secs_all += [(subject, day, url, sec) for sec in secs]
+    md_snippets(snippets)
+    prose_code(snippets, secs_all)
     # src files
     for subject, day, d in SRC_DIRS:
         if not os.path.isdir(d):
