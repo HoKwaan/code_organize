@@ -205,43 +205,83 @@
   }
 
   /* ---------- 시험 양식 ---------- */
-  function examQuestions(code) {
-    // 빈칸 줄과 TODO 설명 묶음을 문제 단위로 뽑는다
-    const L = code.split('\n');
-    const qs = [];
-    for (let i = 0; i < L.length; i++) {
-      if (/_{4,}/.test(L[i]) && !/빈칸\s+_{3,}/.test(L[i])) qs.push({ line: i, end: i, text: L[i], label: (L[i].match(/[①-⑳]/) || [''])[0] });
-      if (/TODO\s*\d/.test(L[i]) && /^\s*(\/\/|\/\*|\*)/.test(L[i])) {
-        let j = i;
-        while (j + 1 < L.length && /^\s*(\/\/|\*)/.test(L[j + 1]) && !/^\s*\*\/\s*$/.test(L[j + 1])) j++;
-        qs.push({ line: i, end: j, text: L.slice(i, j + 1).join('\n'), label: (L[i].match(/TODO\s*\d+/) || ['TODO'])[0] });
-        i = j;
-      }
-    }
-    return qs;
+  // 양식의 빈칸 · TODO 와 data/exam_answers.js 의 정답
+  const EXAM_QS = {};
+  function examQs(ex) {
+    return EXAM_QS[ex.id] || (EXAM_QS[ex.id] = window.ExamKit.attach(ex.id, window.ExamKit.questions(ex.code)));
+  }
+
+  function examAnswer(q, lang) {
+    const a = q.ans;
+    if (!a) return '<div class="q-ans"><p class="muted">정리된 정답이 없습니다. 아래 버튼으로 비슷한 코드를 찾아보세요.</p></div>';
+    const why = a.why ? `<p class="q-why">${esc(a.why)}</p>` : '';
+    if (q.todo) return `<div class="q-ans">${codeBlock(a.code, lang, { label: '정답 코드 (TODO 설명 아래에 넣는다)', compact: true })}${why}</div>`;
+    const alt = a.alt ? ` <span class="muted">같이 맞음: ${a.alt.map(x => `<code>${esc(x)}</code>`).join(', ')}</span>` : '';
+    return `<div class="q-ans"><div class="q-key">정답 <code class="ans">${esc(a.answer)}</code>${alt}</div>${why}</div>`;
+  }
+
+  function examQuestion(q, n, lang) {
+    const text = q.text.split('\n').map(l => l.trim().replace(/\s{3,}/g, '   ')).join('\n');
+    return `<li class="exam-q" data-n="${n}">
+      <div class="q-head"><span class="q-no">${n + 1}</span><code>${esc(text)}</code><span class="q-line">${q.line + 1}행</span></div>
+      <button type="button" class="q-show">정답 보기</button>
+      ${examAnswer(q, lang)}
+      <button type="button" class="q-btn" data-n="${n}">정리본에서 비슷한 코드 찾기</button>
+      <div class="q-res" hidden></div></li>`;
   }
 
   function pageExam(id) {
     const ex = examById[id];
     if (!ex) return notFound();
-    const qs = examQuestions(ex.code);
+    const qs = examQs(ex);
     const marks = new Set();
     qs.forEach(q => { for (let k = q.line; k <= q.end; k++) marks.add(k); });
+    const sol = window.ExamKit.solved(ex.code, qs);
+    const nb = qs.filter(q => !q.todo).length, nt = qs.filter(q => q.todo).length;
     return `${crumbs([['#/', '홈'], [null, '양식'], [null, ex.title]])}
       <h1>${esc(ex.title)}</h1>
-      <p class="muted">${esc(ex.source)} · 빈칸 ${qs.filter(q => !/TODO/.test(q.label)).length}곳 · TODO ${qs.filter(q => /TODO/.test(q.label)).length}곳. 각 문제를 누르면 정리본에서 찾은 후보가 열립니다.</p>
-      <div class="exam-actions"><button type="button" class="btn" id="solveAll">모든 문제 후보 열기</button></div>
-      <ol class="exam-qs">${qs.map((q, n) => `<li class="exam-q" data-n="${n}">
-        <button type="button" class="q-btn" data-n="${n}"><span class="q-no">${n + 1}</span><code>${esc(q.text.trim().split('\n')[0].trim())}</code><span class="q-line">${q.line + 1}행</span></button>
-        <div class="q-res" hidden></div></li>`).join('')}</ol>
+      <p class="muted">${esc(ex.source)} · 빈칸 ${nb}곳 · TODO ${nt}곳. 문제마다 정답이 하나씩 있습니다. 정답은 양식의 [N단계] 기대값이 나오도록 맞춘 답이고, 정답을 채운 전체 코드는 맨 아래에 있습니다.</p>
+      <div class="exam-actions"><button type="button" class="btn" id="hideAns"></button></div>
+      <ol class="exam-qs">${qs.map((q, n) => examQuestion(q, n, ex.lang)).join('')}</ol>
       <h2>양식 전체 코드</h2>
-      ${codeBlock(ex.code, ex.lang, { marks, label: ex.source })}`;
+      <details class="sub" open><summary>정답을 채운 전체 코드 (채운 줄은 노란 줄)</summary>${codeBlock(sol.code, ex.lang, { marks: sol.marks, label: ex.source + ' · 정답' })}</details>
+      <details class="sub"><summary>빈칸 양식 원본</summary>${codeBlock(ex.code, ex.lang, { marks, label: ex.source })}</details>`;
   }
 
   function solveExamQuestion(ex, q, box) {
     const res = window.CodeSearch.search(q.text, { subject: ex.subject });
     box.innerHTML = renderItems(res.items) + `<p class="q-more"><a href="#/search?q=${enc(q.text)}&s=${ex.subject}">검색 화면에서 열기</a></p>`;
     box.hidden = false;
+  }
+
+  // 검색어에 양식의 빈칸 줄이나 TODO 첫 줄이 그대로 들어 있으면 그 문제의 정답을 돌려준다
+  function examKey(s) {
+    return s.replace(/\/\/.*$|\/\*.*?(\*\/|$)/gm, '')
+      .replace(/_{3,}|[□■▢☐]+|\?{2,}|\(\s*[①-⑳㉠-㉭]\s*\)/g, '_')
+      .replace(/\s+/g, '');
+  }
+
+  function examExact(text) {
+    const hits = [];
+    const lines = text.split('\n');
+    const keys = new Set(lines.map(examKey).filter(k => k.length > 3));
+    const todos = lines.map(l => l.trim().replace(/\s+/g, ' ')).filter(l => /TODO\s*\d+\s*:/.test(l));
+    (DATA.exams || []).forEach(ex => examQs(ex).forEach((q, n) => {
+      if (!q.ans) return;
+      const hit = q.todo
+        ? todos.some(t => t === q.text.split('\n')[0].trim().replace(/\s+/g, ' '))
+        : keys.has(examKey(q.text));
+      if (hit) hits.push({ ex, q, n });
+    }));
+    return hits;
+  }
+
+  function renderExact(hits) {
+    if (!hits.length) return '';
+    return `<div class="exact"><div class="exact-t">양식 문제의 정답</div>${hits.map(h => `
+      <div class="exact-q"><a href="#/e/${enc(h.ex.id)}" class="muted">${esc(h.ex.title)} · 문제 ${h.n + 1} (${h.q.line + 1}행)</a>
+        ${h.q.todo ? '' : `<div class="qline-q"><code>${esc(h.q.text.trim())}</code></div>`}
+        ${examAnswer(h.q, h.ex.lang)}</div>`).join('')}</div>`;
   }
 
   /* ---------- 검색 ---------- */
@@ -252,7 +292,7 @@
     if (q.trim()) {
       const t0 = performance.now();
       const r = window.CodeSearch.search(q, { subject: subj });
-      body = `<p class="muted">${Math.round(performance.now() - t0)} ms</p>` + renderItems(r.items) + renderRelated(r.related);
+      body = renderExact(examExact(q)) + `<p class="muted">${Math.round(performance.now() - t0)} ms</p>` + renderItems(r.items) + renderRelated(r.related);
     }
     return `${crumbs([['#/', '홈'], [null, '빈칸 검색']])}
       <h1>빈칸 검색</h1>
@@ -382,29 +422,30 @@
     if (r.name === 'exam') {
       const ex = examById[r.id];
       if (!ex) return;
-      const qs = examQuestions(ex.code);
-      const toggle = n => {
-        const li = $(`.exam-q[data-n="${n}"]`);
-        const box = li.querySelector('.q-res');
+      const qs = examQs(ex);
+      const list = $('.exam-qs');
+      const hideBtn = $('#hideAns');
+      const setHide = on => {
+        list.classList.toggle('hide-ans', on);
+        list.querySelectorAll('.exam-q.shown').forEach(li => li.classList.remove('shown'));
+        hideBtn.textContent = on ? '정답 모두 보기' : '정답 가리고 풀어 보기';
+        try { localStorage.setItem('co.hideAns', on ? '1' : ''); } catch (e) { /* ignore */ }
+      };
+      let hidden = false;
+      try { hidden = localStorage.getItem('co.hideAns') === '1'; } catch (e) { /* ignore */ }
+      setHide(hidden);
+      hideBtn.addEventListener('click', () => setHide(!list.classList.contains('hide-ans')));
+      document.querySelectorAll('.q-show').forEach(b => b.addEventListener('click', () => b.closest('.exam-q').classList.add('shown')));
+      document.querySelectorAll('.q-btn').forEach(b => b.addEventListener('click', () => {
+        const n = +b.dataset.n;
+        const box = b.nextElementSibling;
         if (!box.hidden) { box.hidden = true; return; }
         if (!box.innerHTML) {
           box.innerHTML = '<p class="muted">찾는 중…</p>';
           box.hidden = false;
           setTimeout(() => solveExamQuestion(ex, qs[n], box), 10);
         } else box.hidden = false;
-      };
-      document.querySelectorAll('.q-btn').forEach(b => b.addEventListener('click', () => toggle(+b.dataset.n)));
-      $('#solveAll').addEventListener('click', () => {
-        let n = 0;
-        const step = () => {
-          if (n >= qs.length) return;
-          const box = $(`.exam-q[data-n="${n}"] .q-res`);
-          if (!box.innerHTML) solveExamQuestion(ex, qs[n], box); else box.hidden = false;
-          n++;
-          setTimeout(step, 0);
-        };
-        step();
-      });
+      }));
     }
   }
 
