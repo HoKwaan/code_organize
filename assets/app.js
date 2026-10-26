@@ -8,7 +8,7 @@
   const subjById = Object.fromEntries(DATA.subjects.map(s => [s.id, s]));
   const snById = Object.fromEntries(DATA.snippets.map(s => [s.id, s]));
   const examById = Object.fromEntries((DATA.exams || []).map(s => [s.id, s]));
-  const KIND_LABEL = { fill: '빈칸 채우기', quiz: '괄호 넣기', inline: '본문 코드', src: '소스 파일', pdf: 'PDF 슬라이드', ref: '보충', exam: '시험 양식' };
+  const KIND_LABEL = { fill: '빈칸 채우기', quiz: '괄호 넣기', inline: '본문 코드', src: '소스 파일', pdf: 'PDF 슬라이드', ref: '보충', exam: '양식' };
 
   window.CodeSearch.build(DATA);
 
@@ -102,7 +102,7 @@
     $('#side').innerHTML = `
       <div class="side-sec">
         <a href="#/search" class="side-link${route.name === 'search' ? ' on' : ''}">🔎 빈칸 검색</a>
-        ${(DATA.exams || []).map(e => `<a href="#/e/${e.id}" class="side-link${cur === '#/e/' + e.id ? ' on' : ''}">📝 ${esc(e.title.replace(' 2차 평가(C형) 양식', ' 시험 양식'))}</a>`).join('')}
+        ${(DATA.exams || []).map(e => `<a href="#/e/${e.id}" class="side-link${cur === '#/e/' + e.id ? ' on' : ''}">📝 ${esc(e.title.replace('양식', '양식'))}</a>`).join('')}
       </div>
       ${DATA.subjects.map(sub => {
         const groups = GROUPS[sub.id] || [];
@@ -123,7 +123,7 @@
   /* ---------- 페이지 ---------- */
   function searchBox(q, subj) {
     return `<form class="bigsearch" id="bigSearch">
-      <textarea id="bq" rows="6" spellcheck="false" placeholder="시험지의 빈칸 줄이나 TODO 를 그대로 붙여넣으세요.\n예)  pinMode(PIN_LED, ______);   // ② 빨강 LED 핀을 출력으로">${esc(q)}</textarea>
+      <textarea id="bq" rows="6" spellcheck="false" placeholder="검색을 원하는 부분을 넣으세요.">${esc(q)}</textarea>
       <div class="bs-row">
         <select id="bs" aria-label="과목">
           <option value="">전체 과목</option>
@@ -150,13 +150,13 @@
     return `
       <section class="hero">
         <h1>코드 정리 · 빈칸 검색</h1>
-        <p>MCU · Linux · Embedded_IO 강의 자료의 코드 ${n}개를 모았습니다. 시험지의 빈칸 줄이나 TODO 를 붙여넣으면 정답 후보를 찾아줍니다.</p>
+        <p>MCU · Linux · Embedded_IO 강의 자료의 코드 ${n}개를 모았습니다.</p>
         ${searchBox('', '')}
         ${helpBox(false)}
       </section>
-      <h2>시험 양식</h2>
+      <h2>양식</h2>
       <section class="cards">
-        ${(DATA.exams || []).map(e => `<a class="card" href="#/e/${e.id}"><div class="card-t">${esc(e.title)}</div><div class="card-n">${esc(e.source)} · 빈칸 · TODO 바로 찾기</div></a>`).join('')}
+        ${(DATA.exams || []).map(e => `<a class="card" href="#/e/${e.id}"><div class="card-t">${esc(e.title)}</div><div class="card-n">${esc(e.source)} · 바로 찾기</div></a>`).join('')}
       </section>
       <h2>과목</h2>
       <section class="cards">
@@ -227,7 +227,7 @@
     const qs = examQuestions(ex.code);
     const marks = new Set();
     qs.forEach(q => { for (let k = q.line; k <= q.end; k++) marks.add(k); });
-    return `${crumbs([['#/', '홈'], [null, '시험 양식'], [null, ex.title]])}
+    return `${crumbs([['#/', '홈'], [null, '양식'], [null, ex.title]])}
       <h1>${esc(ex.title)}</h1>
       <p class="muted">${esc(ex.source)} · 빈칸 ${qs.filter(q => !/TODO/.test(q.label)).length}곳 · TODO ${qs.filter(q => /TODO/.test(q.label)).length}곳. 각 문제를 누르면 정리본에서 찾은 후보가 열립니다.</p>
       <div class="exam-actions"><button type="button" class="btn" id="solveAll">모든 문제 후보 열기</button></div>
@@ -267,7 +267,7 @@
 
   function snLabel(sn) {
     const sub = subjById[sn.subject] || {};
-    if (sn.kind === 'exam') return `${sub.name || ''} · 시험 양식 (제공 코드)`;
+    if (sn.kind === 'exam') return `${sub.name || ''} · 양식 (제공 코드)`;
     return `${sub.name || ''}${sn.day ? ` · Day ${sn.day}` : ''} · ${sn.title}`;
   }
 
