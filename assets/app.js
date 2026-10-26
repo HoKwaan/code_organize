@@ -2,13 +2,15 @@
   'use strict';
 
   const DATA = window.CODE_INDEX || { subjects: [], snippets: [], exams: [] };
+  DATA.snippets.forEach(sn => { sn.day = sn.day || 0; sn.period = sn.period || 0; });
   const $ = (s, el = document) => el.querySelector(s);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const enc = encodeURIComponent;
   const subjById = Object.fromEntries(DATA.subjects.map(s => [s.id, s]));
   const snById = Object.fromEntries(DATA.snippets.map(s => [s.id, s]));
   const examById = Object.fromEntries((DATA.exams || []).map(s => [s.id, s]));
-  const KIND_LABEL = { fill: '빈칸 채우기', quiz: '괄호 넣기', inline: '본문 코드', src: '소스 파일', pdf: 'PDF 슬라이드', ref: '보충', exam: '양식' };
+  const KIND_LABEL = { fill: '빈칸 채우기', quiz: '괄호 넣기', inline: '본문 코드', src: '소스 파일', pdf: 'PDF 슬라이드', ref: '보충', api: '강의 코드 모음', exam: '양식' };
+  const kindOf = sn => (sn.kind === 'ref' && sn.refs ? 'api' : sn.kind);
 
   window.CodeSearch.build(DATA);
 
@@ -24,7 +26,7 @@
   });
   Object.values(GROUPS).forEach(list => list.sort((a, b) => (a.day || 99) - (b.day || 99) || a.period - b.period));
   function groupLabel(g) {
-    if (!g.day) return '보충 사전';
+    if (!g.day) return 'API 모음';
     if (g.period === 99) return '소스 파일 (src/)';
     if (!g.period) return '개요';
     return g.topic.replace(/^Day \d+ · /, '');
@@ -74,13 +76,17 @@
   function snippetCard(sn, opts = {}) {
     const lang = langOf(sn);
     const marks = opts.marks || blankLines(sn);
-    const kind = sn.kind ? `<span class="tag k-${sn.kind}">${KIND_LABEL[sn.kind] || sn.kind}</span>` : '';
+    const kind = sn.kind ? `<span class="tag k-${sn.kind}">${KIND_LABEL[kindOf(sn)] || sn.kind}</span>` : '';
     const head = opts.noHead ? '' : `<div class="card-h"><a href="#/c/${enc(sn.id)}" class="card-title">${esc(sn.title)}</a>${kind}</div>`;
     let extra = '';
     if (sn.kind === 'fill' || sn.kind === 'quiz') {
       extra += `<details class="sub"><summary>빈칸 원본 보기</summary>${codeBlock(sn.blank, sn.kind === 'quiz' ? 'text' : lang, { label: '빈칸 원본', compact: true })}</details>`;
       if (sn.answer) extra += `<details class="sub"><summary>강의 정답 원문</summary>${codeBlock(sn.answer, sn.kind === 'quiz' ? 'text' : lang, { label: '정답', compact: true })}</details>`;
     }
+    if (sn.refs) extra += `<details class="sub" open><summary>줄마다 강의 출처</summary><ol class="refs">${sn.refs.map(([li, id, l]) => {
+      const o = snById[id];
+      return o ? `<li value="${li + 1}"><a href="#/c/${enc(id)}?l=${l}">${esc(snLabel(o))}</a> <span class="muted">${l + 1}행</span></li>` : '';
+    }).join('')}</ol></details>`;
     if (sn.output) extra += `<details class="sub"><summary>기대 출력</summary>${codeBlock(sn.output, 'text', { label: '출력', compact: true })}</details>`;
     const label = sn.kind === 'fill' ? '완성 코드 (빈칸 자리 노란 줄)' : sn.kind === 'quiz' ? '정답을 [ ] 안에 채운 문장' : null;
     return `<section class="snip" id="sn-${esc(sn.id)}">${head}
@@ -113,7 +119,7 @@
           ${days.map(d => {
             const gs = groups.filter(g => g.day === d);
             const dopen = open && route.day === d;
-            return `<details class="side-day" ${dopen ? 'open' : ''}><summary>${d ? `Day ${d}` : '보충'}</summary>
+            return `<details class="side-day" ${dopen ? 'open' : ''}><summary>${d ? `Day ${d}` : 'API 모음'}</summary>
               ${gs.map(g => link(groupHref(sub.id, g), groupLabel(g), g.items.length)).join('')}</details>`;
           }).join('')}
         </details>`;
@@ -172,10 +178,10 @@
     const days = [...new Set(groups.map(g => g.day))];
     return `${crumbs([['#/', '홈'], [null, sub.full]])}
       <h1>${esc(sub.full)}</h1>
-      ${days.map(d => `<h2>${d ? `Day ${d}` : '보충 사전 (강의 자료 밖 표준 API)'}</h2>
+      ${days.map(d => `<h2>${d ? `Day ${d}` : 'API 모음 (강의 코드에서 모은 줄 · 자료에 없는 보충)'}</h2>
         <ul class="list">${groups.filter(g => g.day === d).map(g => {
           const kinds = {};
-          g.items.forEach(x => { const k = x.kind || 'code'; kinds[k] = (kinds[k] || 0) + 1; });
+          g.items.forEach(x => { const k = kindOf(x) || 'code'; kinds[k] = (kinds[k] || 0) + 1; });
           const sum = Object.entries(kinds).map(([k, c]) => `${KIND_LABEL[k] || '예제'} ${c}`).join(' · ');
           return `<li><a href="${groupHref(id, g)}">${esc(groupLabel(g))}</a><span class="src">${sum}</span></li>`;
         }).join('')}</ul>`).join('')}`;
@@ -185,10 +191,10 @@
     const sub = subjById[subject];
     const g = (GROUPS[subject] || []).find(x => x.day === day && x.period === period);
     if (!sub || !g) return notFound();
-    const toc = g.items.map(sn => `<li><a href="#/c/${enc(sn.id)}">${esc(sn.title)}</a>${sn.kind ? ` <span class="tag k-${sn.kind}">${KIND_LABEL[sn.kind]}</span>` : ''}</li>`).join('');
-    return `${crumbs([['#/', '홈'], [`#/s/${subject}`, sub.full], [null, day ? `Day ${day}` : '보충'], [null, groupLabel(g)]])}
+    const toc = g.items.map(sn => `<li><a href="#/c/${enc(sn.id)}">${esc(sn.title)}</a>${sn.kind ? ` <span class="tag k-${sn.kind}">${KIND_LABEL[kindOf(sn)]}</span>` : ''}</li>`).join('');
+    return `${crumbs([['#/', '홈'], [`#/s/${subject}`, sub.full], [null, day ? `Day ${day}` : 'API 모음'], [null, groupLabel(g)]])}
       <h1>${esc(day ? `Day ${day} · ${groupLabel(g)}` : groupLabel(g))}</h1>
-      <details class="toc"><summary>이 교시 코드 ${g.items.length}개</summary><ol>${toc}</ol></details>
+      <details class="toc"><summary>${day ? '이 교시' : '이 묶음'} 코드 ${g.items.length}개</summary><ol>${toc}</ol></details>
       ${g.items.map(sn => snippetCard(sn)).join('')}`;
   }
 

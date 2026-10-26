@@ -137,6 +137,7 @@ details.toc > summary { cursor: pointer; color: var(--muted); }
 .tag.k-src { background: #e3f6ea; color: #16683a; }
 .tag.k-pdf { background: #ffe6e6; color: #a12a2a; }
 .tag.k-ref { background: #e6eefc; color: #2a4fa1; }
+ol.refs { margin: 4px 0; padding-left: 2.6em; line-height: 1.7; }
 .tag.k-inline { background: var(--code-bg); color: var(--muted); }
 :root[data-theme="dark"] .tag[class*="k-"] { filter: brightness(.8) saturate(1.2); }
 .grps { list-style: none; margin: 10px 0 0; padding: 0; }

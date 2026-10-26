@@ -14,15 +14,13 @@ for x in sn:
     if x.get('topic') and x['period'] and x['period']<99: names[(x['subject'],x['day'],x['period'])]=x['topic']
 for x in sn:
     if not x.get('topic'): x['topic']=names.get((x['subject'],x['day'],x['period']),f"Day {x['day']} · 슬라이드")
-import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from supplement import SUPP
-for i,(subj,title,lang,code) in enumerate(SUPP):
-    sn.append(dict(id=f'{subj}-ref-{i}',subject=subj,day=0,period=0,topic='보충 사전 (강의 자료 밖 표준 API)',title=title,kind='ref',lang=lang,
-        source='보충 — 강의 자료에 없는 표준 API 정리',code=code))
+import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from supplement import SUPP; import refs
+sn.extend(refs.build(sn, SUPP))   # 강의 코드에 있는 API 는 강의 줄로, 없는 것만 보충으로
 kind_order={'fill':1,'quiz':2,'inline':4,'pdf':3,'src':5}
 idx={x['id']:i for i,x in enumerate(sn)}
 sn.sort(key=lambda x:(['mcu','linux','eio'].index(x['subject']),x['day'],x['period'] if x['period'] else 0,x.get('kind')=='inline',x.get('kind')=='pdf',idx[x['id']]))
-keep=['id','subject','day','period','topic','title','kind','lang','source','url','desc','code','blank','answer','output']
-sn=[{k:x[k] for k in keep if x.get(k)} for x in sn]
+keep=['id','subject','day','period','topic','title','kind','lang','source','url','desc','code','blank','answer','output','refs']
+sn=[{k:x[k] for k in keep if x.get(k) or (k in ('day','period') and x.get(k)==0)} for x in sn]
 ids=[x['id'] for x in sn]; assert len(ids)==len(set(ids)), 'dup ids'
 def rd(n): return open(U+n,encoding='utf-8').read().replace('\r','').rstrip('\n')
 exams=[
