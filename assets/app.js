@@ -9,7 +9,7 @@
   const subjById = Object.fromEntries(DATA.subjects.map(s => [s.id, s]));
   const snById = Object.fromEntries(DATA.snippets.map(s => [s.id, s]));
   const examById = Object.fromEntries((DATA.exams || []).map(s => [s.id, s]));
-  const KIND_LABEL = { fill: '빈칸 채우기', quiz: '괄호 넣기', inline: '본문 코드', src: '소스 파일', pdf: 'PDF 슬라이드', ref: '보충', api: '강의 코드 모음', exam: '양식' };
+  const KIND_LABEL = { fill: '빈칸 채우기', quiz: '괄호 넣기', inline: '본문 코드', src: '소스 파일', pdf: 'PDF 슬라이드', table: '표', ref: '보충', api: '강의 코드 모음', exam: '양식' };
   const kindOf = sn => (sn.kind === 'ref' && sn.refs ? 'api' : sn.kind);
 
   window.CodeSearch.build(DATA);

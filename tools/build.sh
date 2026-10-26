@@ -1,6 +1,7 @@
 #!/bin/sh
 # 자료에서 data/index.js 를 다시 만든다.
 #   WORK 폴더에 AI_CAMPUS 저장소(aic/), linux-day1.zip 압축 해제본(ld1/), MCU PDF(MCU_Day1~4.pdf)를 둔다.
+#   Linux · Embedded_IO 슬라이드 PDF 와 MCU md 는 aic/ 안의 것을 쓴다.
 #   sh tools/build.sh /path/to/work
 set -e
 WORK=${1:?usage: build.sh WORK_DIR}
@@ -11,6 +12,9 @@ cd "$WORK"
 [ -d ld1 ] || unzip -q aic/Linux-day1/linux-day1.zip -d ld1
 mkdir -p pdf
 for d in 1 2 3 4; do python3 pdfcode.py "MCU_Day$d.pdf" "pdf/b$d.json"; done
+python3 pdfcode.py aic/Linux-day1/slide.pdf pdf/L1.json
+for d in 2 3 4 5; do python3 pdfcode.py "aic/Linux-day$d/Linux_Day${d}_slides.pdf" "pdf/L$d.json"; done
+for d in 1 2 3 4 5; do python3 pdfcode.py "aic/EmbeddedIO-day$d/EmbeddedIO_Day${d}_slides.pdf" "pdf/E$d.json"; done
 python3 extract.py sn.json
 python3 check.py | tail -1          # 강의 코드 블록이 빠짐없이 들어갔는지 확인
 python3 pdfsel.py > /dev/null

@@ -23,9 +23,11 @@ MCU(아두이노) · Linux(shell, C) · Embedded_IO(C) 강의 자료의 코드�
 
 - 강의 페이지 14개(MCU 1~4, Linux 1~5, EmbeddedIO 1~5)의 모든 코드 블록 — `tools/check.py` 로 빠진 블록이 없는지 확인
 - 빈칸 채우기는 강의 정답으로 채운 완성본 + 빈칸 원본 + 정답 원문, 괄호 넣기는 정답을 [ ] 로 채운 문장
-- 강의가 쓰는 `src/` 소스 파일, MCU PDF 슬라이드에만 있는 코드
+- 강의 본문의 표(교시마다 `표 · …`, 한 행을 ` | ` 로 이어 한 줄), 코드 태그 없이 본문 · 그림에만 나온 함수 이름 · 상수 · 경로
+- 강의가 쓰는 `src/` 소스 파일, PDF 슬라이드(MCU_Day1~4.pdf, Linux · EmbeddedIO 슬라이드)에만 있는 코드 · 명령어
+- MCU 강의 md(`MCU_DayN_lecture.md`, HTML 보다 이전 판)에만 있는 코드 · 빈칸 · 괄호 넣기 · 표 — 제목 끝에 `md 판에만 있음`
 - 시험 양식: `materials/exams/`. 정답은 `data/exam_answers.js` 에 따로 두고 빌드와 상관없이 고친다.
   `node tools/check_answers.js [OUT_DIR]` 로 모든 문제에 정답이 하나씩 붙는지 확인한다 (OUT_DIR 을 주면 정답을 채운 양식을 써 준다).
   Linux 양식은 채운 코드를 빌드 · 실행해 6단계 모두 기대값과 같음을 확인했고, Embedded_IO 는 libgpiod v2 헤더로 컴파일 확인, MCU 는 Arduino 함수 흉내로 6단계 출력을 확인했다.
 - API 모음(`tools/supplement.py` → `tools/refs.py`): 빈칸에 나올 수 있는 표준 API 목록을 줄마다 강의 코드에서 찾아,
-  강의에 있으면 그 강의 줄(줄마다 출처 링크)로 보여 주고 14개 강의 페이지 · src · MCU PDF 어디에도 없는 것만 '보충' 으로 남긴다.
+  강의에 있으면 그 강의 줄(줄마다 출처 링크)로 보여 주고 14개 강의 페이지 · src · PDF 슬라이드 · md 어디에도 없는 것만 '보충' 으로 남긴다.
