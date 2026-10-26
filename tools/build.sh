@@ -5,7 +5,7 @@
 set -e
 WORK=${1:?usage: build.sh WORK_DIR}
 T=$(cd "$(dirname "$0")" && pwd)
-cp "$T"/extract.py "$T"/pdfcode.py "$T"/pdfsel.py "$T"/supplement.py "$T"/gen.py "$T"/check.py "$WORK"/
+cp "$T"/extract.py "$T"/pdfcode.py "$T"/pdfsel.py "$T"/supplement.py "$T"/refs.py "$T"/gen.py "$T"/check.py "$WORK"/
 cd "$WORK"
 [ -d aic ] || git clone --depth 1 https://github.com/imguru-mooc/AI_CAMPUS.git aic
 [ -d ld1 ] || unzip -q aic/Linux-day1/linux-day1.zip -d ld1
