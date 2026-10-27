@@ -1,0 +1,459 @@
+@@ linux-d2-intro-t1
+Linux Day 2 시간표다. 1교시 컨텍스트 스위치 관찰, 2교시 CFS 실측, 3교시 CPU affinity, 4교시 실시간 정책, 5교시 시간 측정과 주기 실행, 6교시 cgroup v2 로 CPU 제한, 7교시 jitter.c 측정 실습, 8교시 정리 · 임베디드에서 정책 고르기다. 교시마다 animation.html 의 D2-N 애니메이션이 있다.
+
+@@ linux-d2-pdf-p1-1
+Day 2 표지 슬라이드의 예시 출력이다. `./02_nice_race 10` 은 nice 0 인 A 와 nice 10 인 B 를 같은 CPU 에서 경쟁시킨 결과로, CFS 가중치(nice 0 = 1024, nice 10 = 110)대로 A 약 90%, B 약 10% 의 CPU 를 받는다. 측정값이 예상과 거의 같다는 것이 Day 2 의 주제 "누가, 얼마나, 얼마나 늦게" 다.
+
+@@ linux-d2-intro-inline
+Day 2 개요 본문에 나온 코드 조각이다.
+- `src/`: 예제 소스 폴더.
+- `make 이름`: 예제 하나를 빌드하는 방법.
+- `animation.html`: 교시별 개념 애니메이션 페이지.
+
+@@ linux-d2-sec1-1
+Hyper-V 가 켜진 Windows 에서 VirtualBox VM 이 잠든 뒤 제때 깨어나지 못하는 증상의 예다. `./jitter -n 2000` 의 최대 지연이 1.8초나 되고, `dmesg` 에 "clocksource: Long readout interval" 경고가 보인다. 시계(clock_gettime)는 정확하고 프로세스가 늦게 깨어났을 뿐이다. 원인은 VirtualBox 가 Hyper-V 위(NEM 모드, 초록 거북이 아이콘)에서 돌기 때문이다.
+
+@@ linux-d2-sec1-2
+VM 의 vCPU 가 호스트에 의해 멈추는지 감시하는 프로그램이다.
+- CPU 를 쉬지 않고 돌며 `clock_gettime(CLOCK_MONOTONIC)` 을 연속으로 읽는다. `ns()` 는 timespec 을 나노초 하나로 바꾼다.
+- 연속 두 번 읽은 사이(gap)가 5 ms 이상이면 그동안 실행되지 못한 것이므로 횟수 · 최대 · 합계를 기록하고, 처음 15번은 시점과 길이를 출력한다.
+- 끝에 멈춤 횟수와 최대값으로 정상 / 가벼움(20 ms 미만) / 심각을 판단한다.
+게스트 안에 경쟁자가 없는데도 멈춤이 자주 생기면 호스트(Windows · Hyper-V)가 vCPU 를 멈춘 것이다.
+
+@@ linux-d2-sec1-3
+점검 순서다. `make -s` 로 jitter · stallwatch 를 조용히 빌드한다. 쉬지 않는 stallwatch 는 거북이 모드여도 0회로 나올 수 있고, 잠드는 jitter 의 최대 지연이 수 ms 이하면 정상, 100 ms 이상이면 Hyper-V 문제다. 문제는 주로 잠든 뒤 깨어날 때 생기기 때문이다.
+
+@@ linux-d2-sec1-4
+Windows 관리자 PowerShell 에서 하이퍼바이저를 켜는 원인을 진단하는 명령이다.
+- `Get-WindowsOptionalFeature … Microsoft-Hyper-V-All` / `VirtualMachinePlatform`: Hyper-V 와 가상 머신 플랫폼(WSL2) 기능이 켜졌는지 (이름은 한 번에 하나만).
+- `Get-CimInstance … Win32_DeviceGuard`: VBS(가상화 기반 보안) 상태와 실행 중인 보안 서비스(메모리 무결성 등).
+- `reg query … DeviceGuard` · `… SystemGuard`: Device Guard · Secure Launch 정책 레지스트리 값.
+- `bcdedit /enum "{current}" | findstr -i hypervisor`: 부팅 설정의 hypervisorlaunchtype.
+원인별로 끄고 재시작해 VBS 상태가 0 이 될 때까지 반복한다.
+
+@@ linux-d2-sec1-8
+오늘의 질문을 숫자로 확인한다. `nproc` 은 vCPU 2개, `ps -e --no-headers | wc -l` 은 지금 프로세스 수(수백 개), `cat /proc/loadavg` 는 1 · 5 · 15분 평균 실행 대기 수다. CPU 2개를 수백 개 프로세스가 나눠 쓰므로 커널이 짧은 시간마다 실행할 프로세스를 바꾸는 컨텍스트 스위치가 일어난다.
+
+@@ linux-d2-sec1-t5
+ps 의 프로세스 상태(STAT)표다.
+- R: 실행 중이거나 실행 대기(run queue). 계산 중인 프로그램.
+- S: 잠듦. 깨워 줄 사건(sleep 만료, 키 입력)을 기다림.
+- D: 깨울 수 없는 잠. 주로 디스크 I/O 대기.
+- Z: 좀비 (Day 1 07_zombie).
+
+@@ linux-d2-sec1-5
+진단 결과에 따라 하이퍼바이저를 켜는 원인을 하나씩 끄는 관리자 PowerShell 명령이다.
+- A: `Disable-WindowsOptionalFeature` 로 Hyper-V 와 가상 머신 플랫폼(WSL2) 기능을 끈다 (-NoRestart 로 재시작은 나중에).
+- B: `reg add` 로 메모리 무결성(HVCI) Enabled = 0, Credential Guard(LsaCfgFlags) = 0.
+- C: System Guard Secure Launch Enabled = 0.
+- D: 정책(Policies) 과 일반 위치 양쪽의 EnableVirtualizationBasedSecurity = 0 으로 VBS 강제를 푼다.
+- E: `bcdedit /set "{current}" hypervisorlaunchtype off` 로 부팅 때 하이퍼바이저를 올리지 않게 하고 확인한다.
+`/t REG_DWORD /d 0 /f` 는 DWORD 형식 값 0 을 확인 없이 덮어쓴다는 뜻이다.
+
+@@ linux-d2-sec1-6
+회사 관리 PC 인지 확인한다. `dsregcmd /status` 출력에서 AzureAdJoined · DomainJoined · MDMUrl 줄만 골라 본다. YES 이거나 MDMUrl 에 주소가 있으면 회사(Intune · 도메인) 정책이 내려오는 PC 라 고쳐도 다시 켜지므로 IT 담당자에게 요청하고, 그동안 VM 안의 idle=poll 방법을 쓴다.
+
+@@ linux-d2-sec1-7
+하이퍼바이저를 끌 수 없는 PC 에서 VM 안에 `idle=poll` 커널 옵션을 넣는 방법이다. `sed -i` 로 /etc/default/grub 의 GRUB_CMDLINE_LINUX_DEFAULT=" 바로 뒤(`&` 는 찾은 문자열)에 idle=poll 을 끼워 넣고 `update-grub` 후 재부팅한다. vCPU 가 쉬지 않아 깨어나기 지연이 사라지지만 호스트 코어를 계속 100% 쓴다. 실습 후에는 두 번째 줄로 옵션을 지우고 되돌린다.
+
+@@ linux-d2-sec1-9
+잠드는 프로그램과 계속 도는 프로그램의 컨텍스트 스위치 수를 비교한다.
+- `status_value(key)` 는 /proc/self/status 에서 key 줄을 찾아 콜론 뒤 숫자를 `atol` 로 돌려준다.
+- 시작 전후로 `voluntary_ctxt_switches`(스스로 잠든 횟수)와 `nonvoluntary_ctxt_switches`(선점당한 횟수)를 읽어 차이를 출력한다.
+- sleep 모드는 `usleep(1000)` 을 1000번 해서 매번 스스로 CPU 를 내려놓는다.
+- busy 모드는 `now_sec()`(CLOCK_MONOTONIC 초)로 2초 동안 `volatile` 변수를 계속 증가시킨다. volatile 이라 최적화로 루프가 사라지지 않는다.
+자발적은 sleep · I/O 대기로 스스로 내려놓는 것, 비자발적은 할 일이 남았는데 스케줄러가 빼앗는(선점) 것이다.
+
+@@ linux-d2-sec1-10
+예제 01 실행 순서다. sleep 과 busy 를 각각 실행한 뒤, `stress-ng --cpu 2 --timeout 20 &` 로 두 vCPU 를 20초 동안 바쁘게 만든 상태에서 busy 를 다시 실행해 비자발적 전환이 늘어나는 것을 본다.
+
+@@ linux-d2-sec1-11
+예제 01 기대 출력이다. sleep 모드는 자발적 1000, 비자발적 0 이다. stress-ng 가 켜진 상태의 busy 모드는 스스로 내려놓는 일이 없어 자발적 0 이고, 경쟁자 때문에 스케줄러가 주기적으로 빼앗아 비자발적 전환이 270 번쯤 생긴다.
+
+@@ linux-d2-sec1-12
+두 전환 횟수를 읽는 빈칸 채우기다.
+- 빈칸 ① `voluntary_ctxt_switches`: 스스로 잠들어 CPU 를 내려놓은 횟수.
+- 빈칸 ② `nonvoluntary_ctxt_switches`: 할 일이 남았는데 선점당한 횟수.
+- 빈칸 ③ `usleep`: 1000µs = 1 ms 잠드는 호출. 부를 때마다 자발적 전환이 하나씩 늘어 1000 이 된다.
+
+@@ linux-d2-sec1-t1
+Hyper-V 가 켜진 PC 의 증상 비교표다. 02 · 03 · 04 · stallwatch 처럼 쉬지 않고 계산하는 예제는 vCPU 가 쉬지 않아 정상(90.3% : 9.7%)이다. 06 상대 sleep · jitter 처럼 잠들었다 깨어나는 예제는 vCPU 가 idle(HLT) 상태에서 제때 깨어나지 못해 오차 +1800 ms, 최대 지연 1.8초가 나온다.
+
+@@ linux-d2-sec1-t2
+하이퍼바이저 진단 결과별 원인과 할 일 표다.
+- Hyper-V-All · VirtualMachinePlatform 이 Enabled → Hyper-V · WSL2 기능 → A.
+- VirtualizationBasedSecurityStatus : 2 → VBS 실행 중. 이것만 남아도 거북이 모드라 서비스 번호로 판단한다.
+- SecurityServicesRunning {1} Credential Guard, {2} 메모리 무결성 → B.
+- {3, 4} System Guard Secure Launch + SMM 펌웨어 측정 (Windows 보안 화면에 안 보임) → C.
+- 정책 경로의 EnableVirtualizationBasedSecurity 0x1 → 정책이 VBS 를 강제 → D.
+- hypervisorlaunchtype 줄이 없음 → 기본값(자동) → E.
+
+@@ linux-d2-sec1-t3
+레지스트리와 함께 바꿀 화면 설정이다. B(메모리 무결성 · 커널 모드 하드웨어 적용 스택 보호 끄기)는 Windows 보안 → 장치 보안 → 코어 격리 세부 정보에서, D(가상화 기반 보안 켜기 → 사용 안 함)는 Windows Pro 이상의 gpedit.msc → 컴퓨터 구성 → 관리 템플릿 → 시스템 → Device Guard 에서 바꾼다.
+
+@@ linux-d2-sec1-t4
+설정을 바꾼 뒤 확인하는 순서표다.
+1. VM 안에서 `sudo poweroff` 로 VM 을 완전히 끈다.
+2. Windows 를 다시 시작해 하이퍼바이저 설정을 반영한다.
+3. PowerShell 에서 VirtualizationBasedSecurityStatus 가 0 인지 본다.
+4. VirtualBox 오른쪽 아래 거북이 아이콘이 파란 V 로 바뀌었는지 본다.
+5. `./jitter -n 20000` 을 다시 돌려 최대 지연이 몇 ms 수준으로 줄었는지 확인한다.
+
+@@ linux-d2-sec1-p1-2
+1. 바로 실행할 수 있는 태스크는 R(Running/Runnable) 상태다.
+2. `usleep` 처럼 스스로 잠드는 전환은 자발적 전환이다.
+3. 할 일이 남았는데 스케줄러가 CPU 를 빼앗는 것은 선점(비자발적 전환)이다.
+4. 경쟁자가 없으면 빼앗길 이유가 없으므로 비자발적 전환은 (거의) 없다.
+
+@@ linux-d2-pdf-p3-1
+슬라이드 예시다. `grep ctxt /proc/self/status` 는 grep 자신의 전환 횟수를 보여 준다. 짧게 실행되고 끝나므로 자발적 3, 비자발적 0 처럼 작은 값이 나온다.
+
+@@ linux-d2-sec1-inline
+- `clock_gettime`: 현재 시각을 ns 단위로 읽는 함수. 두 번 읽은 차이로 경과 시간을 잰다.
+- `src/stallwatch.c`: 시간을 계속 재며 갑자기 멈춘(stall) 구간을 찾는 진단 예제.
+- `bcdedit`: Windows 부팅 설정을 보고 바꾸는 명령.
+- `Get-WindowsOptionalFeature -FeatureName`: Windows 선택 기능이 켜져 있는지 확인하는 PowerShell 명령.
+- `Microsoft-Hyper-V-All`: Hyper-V 전체 기능 이름.
+- `VirtualMachinePlatform`: WSL2 등이 쓰는 가상 머신 플랫폼 기능 이름.
+- `Enabled`: 기능이 켜져 있다는 상태값.
+- `VirtualizationBasedSecurityStatus : 2`: VBS 가 실행 중이라는 뜻.
+- `SecurityServicesRunning : {1}`: Credential Guard 가 실행 중.
+- `SecurityServicesRunning : {2}`: 메모리 무결성(HVCI)이 실행 중.
+- `SecurityServicesRunning : {3, 4}`: System Guard Secure Launch 와 SMM 펌웨어 측정이 실행 중.
+- `Policies\…\DeviceGuard`: VBS 를 정책으로 강제하는 레지스트리 경로.
+- `EnableVirtualizationBasedSecurity 0x1`: 정책이 VBS 를 켜도록 강제하고 있다는 값.
+- `hypervisorlaunchtype`: 부팅 때 하이퍼바이저를 띄울지 정하는 bcdedit 항목.
+- `gpedit.msc`: 그룹 정책 편집기 (Windows Pro 이상).
+- `0x1`: 레지스트리 값 1, 켜짐.
+- `AzureAdJoined : YES`: 회사 Azure AD 에 가입된 PC. 정책이 자동으로 다시 걸릴 수 있다.
+- `DomainJoined : YES`: 회사 도메인에 가입된 PC.
+- `MDMUrl`: 회사 장치 관리(MDM) 서버 주소. 있으면 설정이 관리자 정책으로 되돌아갈 수 있다.
+- `sudo poweroff`: VM 을 완전히 끄는 명령.
+- `(Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard).VirtualizationBasedSecurityStatus`: VBS 상태 숫자만 읽는 명령. 0 이면 꺼짐.
+- `./jitter -n 20000`: 깨어나기 지연을 2만 번 재는 예제 실행.
+- `0x0`: 레지스트리 값 0, 꺼짐.
+- `DG_Readiness_Tool.ps1 -Disable`: Microsoft 의 Device Guard 도구로 VBS 관련 기능을 한꺼번에 끄는 명령.
+- `Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All`: 끈 Hyper-V 를 다시 켜는 명령 (원상복구).
+- `Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform`: 가상 머신 플랫폼을 다시 켜는 명령 (원상복구).
+- `bcdedit /set "{current}" hypervisorlaunchtype auto`: 부팅 때 하이퍼바이저를 다시 띄우게 하는 명령 (원상복구).
+- `idle=poll`: 커널 부팅 옵션. vCPU 가 HLT 로 잠들지 않고 계속 돌며 기다리게 해 깨어나기 지연을 줄인다 (대신 CPU 를 계속 쓴다).
+- `src/01_ctxsw.c`: 자발적 · 비자발적 문맥 전환 횟수를 세는 예제.
+- `/proc/self/status`: 현재 프로세스의 상태 정보 파일.
+- `voluntary_ctxt_switches`: 스스로 CPU 를 내려놓은 횟수.
+- `nonvoluntary_ctxt_switches`: 선점당한 횟수.
+- `usleep(1000)`: 1 ms 잠드는 호출. 부를 때마다 자발적 전환이 하나 생긴다.
+
+@@ linux-d2-sec2-1
+CFS 의 핵심 식이다. vruntime 증가량 = 실제 실행 시간 × (1024 / weight). weight 가 클수록(nice 가 낮을수록) vruntime 이 천천히 늘어 더 자주 뽑힌다. 스케줄러는 레드블랙 트리에서 vruntime 이 가장 작은 맨 왼쪽 태스크를 고른다. nice 가 1 오를 때마다 weight 는 약 1.25 배 줄어든다. 커널 6.6 부터는 EEVDF 로 바뀌었지만 weight 비율로 나누는 결과는 같다.
+
+@@ linux-d2-sec2-2
+예제 02 `02_nice_race.c` 다. nice → weight 표(WEIGHT)를 두고, 두 자식이 함께 쓰는 카운터를 mmap 공유 메모리에 만든다. fork 한 두 자식을 `sched_setaffinity` 로 CPU 0 하나에 묶어 같은 CPU 를 두고 경쟁하게 하고, 자식 B 는 `setpriority` 로 nice 를 올린다. 0.2초 뒤 동시에 출발해 3초 동안 카운트한 뒤, 실제 비율과 weight 로 계산한 기대 비율을 나란히 출력한다.
+
+@@ linux-d2-sec2-3
+예제 02 실행 명령이다. 인자는 B 의 nice 값으로, 10 과 5 를 넣어 비율이 어떻게 달라지는지 비교한다.
+
+@@ linux-d2-sec2-4
+예제 02 기대 출력이다. nice 0(weight 1024) 대 nice 10(weight 110)이면 기대 비율이 1024/(1024+110) = 90.3% 대 9.7% 이고 실제 측정값도 거의 같다.
+
+@@ linux-d2-sec2-5
+예제 03 `03_vruntime.c` 다. 0.5초마다 `/proc/self/sched` 에서 `se.sum_exec_runtime`(실제 실행 시간)과 `se.vruntime` 을 읽어 증가량의 비율을 출력한다. nice 0 이면 1.00, nice 10 이면 1024/110 ≈ 9.31 이 나와 식이 맞음을 확인한다.
+
+@@ linux-d2-sec5-1
+경과 시간을 µs 로 재는 코드다. `clock_gettime(CLOCK_MONOTONIC)` 을 앞뒤로 두 번 부르고, 초 차이 × 1,000,000 + 나노초 차이 / 1000 으로 µs 를 구한다. MONOTONIC 은 시스템 시각을 바꿔도 거꾸로 가지 않아 시간 측정에 쓴다.
+
+@@ linux-d2-sec2-6
+예제 03 실행 명령이다. 그냥 실행(nice 0)하면 비율이 1.00, `nice -n 10` 으로 실행하면 9.31 근처가 나온다. `nice -n` 은 시작할 때 nice 값을 정해 실행하는 명령이다.
+
+@@ linux-d2-sec2-7
+nice 10 으로 실행한 예제 03 의 출력이다. 0.5초 구간에 실제로 498.2 ms 실행했는데 vruntime 은 4637.5 ms 늘어 비율이 9.31(=1024/110)이다. vruntime 이 빨리 늘어나니 트리 오른쪽으로 밀려 덜 뽑힌다.
+
+@@ linux-d2-sec2-8
+두 자식을 같은 CPU 에서 경쟁시키는 빈칸 채우기다.
+- 빈칸 ① `CPU_ZERO`: CPU 집합을 먼저 비운다.
+- 빈칸 ② `0`: CPU 0 만 집합에 넣어 두 자식이 같은 CPU 를 두고 경쟁하게 한다.
+- 빈칸 ③ `setpriority`: 자기 자신(PID 자리 0)의 nice 를 바꾸는 함수.
+- 빈칸 ④ `10`: B 의 nice 값.
+- 빈칸 ⑤ `110`: nice 10 의 weight. A 의 몫은 1024/(1024+110) = 90.3% 다.
+
+@@ linux-d2-sec2-t1
+nice 값별 weight 와, nice 0 태스크와 둘이 경쟁할 때 차지하는 CPU 몫 표다. 몫은 weight / (1024 + weight) 로 계산한다. nice -5(3121)는 75.3%, 0 은 50%, 5(335)는 24.7%, 10(110)은 9.7%, 19(15)는 1.4% 다.
+
+@@ linux-d2-sec2-p2-2
+1. CFS 는 vruntime 이 가장 작은(가장 덜 실행된) 태스크를 고른다.
+2. nice 0 의 weight 는 기준값 1024 다.
+3. nice 가 클수록 weight 가 작아져 vruntime 이 1024/weight 배 빠르게 늘어난다.
+4. 실행 중인 프로세스의 nice 는 `renice` 로 바꾼다.
+
+@@ linux-d2-pdf-p4-1
+2교시 슬라이드의 실행 결과다. `./02_nice_race 10` 은 A 90.3% · B 9.7% 로 예상과 같고, `nice -n 10 ./03_vruntime` 은 vruntime 이 실제 시간의 9.31배로 늘어난다. 아래 nice-weight 표와 함께 CFS 공식을 확인하는 장면이다.
+
+@@ linux-d2-sec2-inline
+- `uname -r`: 커널 버전 확인. 6.6 이상(EEVDF)이면 숫자가 약간 다를 수 있다.
+- `src/02_nice_race.c`: nice 가 다른 두 프로세스의 계산량을 비교하는 예제.
+- `src/03_vruntime.c`: vruntime 이 늘어나는 속도를 관찰하는 예제.
+- `CPU_ZERO`: cpu_set_t 집합을 비우는 매크로.
+- `CPU_SET(0, …)`: 집합에 CPU 0 을 넣는 매크로.
+- `setpriority(PRIO_PROCESS, 0, 10)`: 자기 자신의 nice 를 10 으로 올리는 호출.
+- `renice`: 이미 실행 중인 프로세스의 nice 를 셸에서 바꾸는 명령.
+
+@@ linux-d2-sec3-1
+예제 04 `04_affinity.c` 다. `print_mask` 는 `sched_getaffinity` 로 허용 CPU 집합을 읽어 `CPU_ISSET` 으로 번호를 나열하고 `CPU_COUNT` 로 개수를 보여 준다. 인자로 CPU 번호를 주면 `CPU_ZERO` · `CPU_SET` 으로 집합을 만들어 `sched_setaffinity` 로 고정한다(없는 번호면 EINVAL). 마지막으로 0.2초씩 바쁘게 돌며 `sched_getcpu()` 로 지금 실행 중인 CPU 를 15번 출력한다.
+
+@@ linux-d2-sec3-2
+예제 04 실행 명령이다. 인자 없이 실행하면 CPU 0 과 1 을 오갈 수 있고, `1` 을 주면 1 만 나온다. vCPU 2개 VM 에서 `5` 를 주면 없는 CPU 라 Invalid argument(EINVAL)로 실패한다.
+
+@@ linux-d2-sec3-3
+`./04_affinity 1` 의 기대 출력이다. 처음에는 0 과 1 두 개가 허용되지만, 고정 뒤에는 1 하나만 남고 0.2초마다 찍은 CPU 번호가 모두 1 이다.
+
+@@ linux-d2-sec3-4
+고정의 대가를 보는 실험이다. `stress-ng --cpu 1 --taskset 0` 으로 CPU 0 만 15초 동안 바쁘게 만든다. 같은 CPU 0 에 고정한 07_busy 는 경쟁 때문에 약 50% 만 받고, 비어 있는 CPU 1 에 고정하면 100% 를 받는다. 고정하면 다른 CPU 가 놀아도 옮겨 가지 않는다.
+
+@@ linux-d2-sec3-5
+현재 프로세스를 CPU 1 에 고정하는 빈칸 채우기다.
+- 빈칸 ① `_GNU_SOURCE`: sched_setaffinity · CPU_SET · sched_getcpu 는 GNU 확장이라 모든 #include 보다 먼저 정의해야 한다.
+- 빈칸 ② `sched_setaffinity`: 0(자기 자신)의 허용 CPU 집합을 바꾸는 함수.
+- 빈칸 ③ `sched_getcpu`: 지금 실행 중인 CPU 번호를 돌려준다.
+- 빈칸 ④ `CPU_COUNT`: 집합에 들어 있는 CPU 개수.
+
+@@ linux-d2-sec3-t1
+affinity 를 정하는 방법 표다. 셸에서 새로 실행할 때는 `taskset -c 0 ./prog`, 이미 실행 중인 PID 는 `taskset -cp 1 <PID>`, C 코드에서는 `sched_setaffinity(0, sizeof(set), &set)` 을 쓰고, 지금 도는 CPU 번호는 `sched_getcpu()` 로 확인한다.
+
+@@ linux-d2-sec3-p3-2
+1. `taskset -c 0` 은 실행할 프로그램의 affinity 를 CPU 0 으로 정한다.
+2. `sched_getcpu()` 는 지금 실행 중인 CPU 번호를 돌려준다.
+3. 존재하지 않는 CPU 만 넣으면 커널이 EINVAL 로 거부한다.
+4. 고정한 CPU 가 바쁘면 다른 CPU 가 비어 있어도 옮겨 가지 않고 기다린다.
+
+@@ linux-d2-sec3-inline
+- `taskset -c 0 ./prog`: 프로그램을 CPU 0 에만 돌게 실행한다.
+- `taskset -cp 1 <PID>`: 이미 실행 중인 프로세스를 CPU 1 로 고정한다.
+- `sched_setaffinity(0, sizeof(set), &set)`: C 코드에서 자기 자신의 허용 CPU 를 정한다.
+- `sched_getcpu()`: 지금 실행 중인 CPU 번호.
+- `src/04_affinity.c`: 허용 CPU 확인과 고정 예제.
+- `sched_setaffinity`: 허용 CPU 집합을 바꾸는 시스템 콜.
+- `CPU_SET`: 집합에 CPU 번호를 넣는 매크로.
+- `sched_getcpu`: 현재 CPU 번호를 돌려주는 함수.
+- `#define _GNU_SOURCE`: GNU 확장 함수를 쓰기 위해 #include 보다 먼저 쓰는 정의.
+- `sched_setaffinity(0, …)`: 첫 인자 0 은 자기 자신을 뜻한다.
+- `CPU_COUNT`: 집합 안 CPU 개수를 세는 매크로.
+- `-c 0 ./prog`: taskset 의 CPU 목록 옵션. CPU 0 에서만 실행.
+- `taskset -c 0`: CPU 0 으로 affinity 를 정하는 셸 명령.
+
+@@ linux-d2-sec4-1
+예제 05 `05_rt_policy.c` 다. `sched_getscheduler(0)` 로 현재 정책(SCHED_OTHER/FIFO/RR)을 출력하고, FIFO 우선순위 범위(1~99)와 `/proc/sys/kernel/sched_rt_runtime_us` · `sched_rt_period_us` 의 RT throttling 값을 보여 준다. 그다음 `sched_setscheduler(0, SCHED_FIFO, &sp)` 로 FIFO 로 바꾸는데, 일반 사용자는 EPERM 으로 실패한다. 성공하면 `sched_getparam` 으로 확인하고 10초 동안 기다려 다른 창에서 `chrt -p` 로 볼 수 있게 한다.
+
+@@ linux-d2-sec4-2
+예제 05 실행 명령이다. 일반 사용자로 실행하면 Operation not permitted(EPERM)로 실패하고, `sudo ./05_rt_policy 50` 은 우선순위 50 의 FIFO 로 바뀐다. 기다리는 동안 두 번째 PuTTY 창에서 `chrt -p <PID>` 로 정책과 우선순위를 확인한다.
+
+@@ linux-d2-sec4-3
+`sudo ./05_rt_policy 50` 의 기대 출력이다. 처음 정책은 일반(SCHED_OTHER)이고, FIFO 우선순위 범위는 1~99, RT throttling 은 1,000,000 µs 중 950,000 µs 다. 변경 뒤에는 SCHED_FIFO, 우선순위 50 으로 바뀐다.
+
+@@ linux-d2-sec4-4
+RT throttling 값을 확인하는 명령이다. 주기(period) 1,000,000 µs 중 RT 태스크는 950,000 µs 까지만 돌 수 있어, 무한 루프 FIFO 태스크가 있어도 0.05초는 셸 · sshd 같은 일반 태스크 몫으로 남는다. 마지막 줄은 강사 시연으로, `chrt -f 50` 으로 FIFO 50 을 주고 `taskset -c 0` 으로 CPU 0 에 묶어 `timeout 5` 동안 07_busy 를 돌리면 CPU 0 반응이 눈에 띄게 느려진다. 이 값을 -1 로 바꾸면 안전장치가 꺼지므로 수업에서는 바꾸지 않는다.
+
+@@ linux-d2-sec4-5
+현재 프로세스를 FIFO 우선순위 80 으로 바꾸는 빈칸 채우기다.
+- 빈칸 ① `sched_param`: 우선순위를 담아 넘기는 구조체.
+- 빈칸 ② `80`: FIFO 우선순위 (1~99 중 하나).
+- 빈칸 ③ `SCHED_FIFO`: 바꿀 정책.
+- 빈칸 ④ `sched_getscheduler`: 현재 정책을 돌려주는 함수로, 바뀌었는지 확인한다.
+RT 정책은 일반 태스크보다 항상 먼저 실행되므로 root 권한(sudo)이 필요하다.
+
+@@ linux-d2-sec4-t1
+스케줄링 정책 비교표다. SCHED_OTHER 는 nice -20~19 를 쓰는 CFS 로 공평하게 나눈다. SCHED_FIFO 는 우선순위 1~99 로, 높은 우선순위 태스크가 끝나거나 잠들 때까지 계속 실행한다. SCHED_RR 은 FIFO 에 더해 같은 우선순위끼리 시간 조각(기본 100 ms)씩 돌아가며 실행한다.
+
+@@ linux-d2-sec4-p4-2
+1. FIFO · RR 우선순위는 1~99 다.
+2. 일반 사용자는 RT 정책으로 바꿀 수 없어 EPERM 이 난다.
+3. 같은 우선순위끼리 시간 조각을 나눠 쓰는 정책은 SCHED_RR 이다.
+4. `sched_rt_runtime_us` 기본값 950000 은 1초 중 0.95초까지만 RT 를 허용한다는 뜻이다.
+
+@@ linux-d2-pdf-p6-1
+4교시 슬라이드의 실행 장면이다. sudo 없이 실행하면 Operation not permitted 로 실패하고, `sudo ./05_rt_policy 50` 은 FIFO 50 으로 바뀐다. 다른 창에서 `chrt -p 2410` 으로 그 PID 의 정책을 확인한다.
+
+@@ linux-d2-sec4-inline
+- `src/05_rt_policy.c`: 정책을 확인하고 SCHED_FIFO 로 바꾸는 예제.
+- `struct sched_param`: 우선순위를 담는 구조체.
+- `sched_priority`: sched_param 안의 우선순위 필드.
+- `sched_setscheduler(0, SCHED_FIFO, &sp)`: 자기 자신의 정책을 FIFO 로 바꾸는 호출.
+- `sched_getscheduler(0)`: 자기 자신의 현재 정책을 읽는 호출.
+- `sched_rt_runtime_us`: 1주기 중 RT 태스크가 쓸 수 있는 시간(µs) 설정 파일.
+
+@@ linux-d2-sec5-2
+예제 06 `06_sleep_drift.c` 다. 1 ms 주기로 1000번, 매 주기 `work()` 로 0.2 ms 일하는 상황을 두 방식으로 잰다. 첫째는 `nanosleep(&rel)` 로 "지금부터 1 ms" 를 쉬는 상대 sleep 으로, 일한 시간과 깨어나는 지연이 매번 더해진다. 둘째는 `add_ns` 로 다음 시각(start + i × 1 ms)을 계산해 `clock_nanosleep(..., TIMER_ABSTIME, &next)` 로 그 시각까지 자는 절대 sleep 으로, 오차가 쌓이지 않는다. 각각 총 걸린 시간과 목표(1000 ms) 대비 오차를 출력한다.
+
+@@ linux-d2-sec5-3
+예제 06 기대 출력이다. 상대 sleep 은 1303 ms 로 +303 ms 밀렸고, 절대 sleep 은 1000.1 ms 로 거의 정확하다. 1000번에 0.3초면 1시간에 18분 차이라, 주기 태스크는 반드시 절대 시각으로 잔다. 상대 오차가 +1000 ms 를 훌쩍 넘거나 절대 오차가 수십 ms 이상이면 VM(거북이 모드) 문제다.
+
+@@ linux-d2-sec5-4
+절대 시각으로 1 ms 주기 루프를 만드는 빈칸 채우기다.
+- 빈칸 ① `CLOCK_MONOTONIC`: 거꾸로 가지 않는 시계로 시작 시각을 읽는다.
+- 빈칸 ② `1000000`: 1 ms = 1,000,000 ns.
+- 빈칸 ③ `tv_sec`: tv_nsec 가 10억(1초)을 넘으면 초로 올린다.
+- 빈칸 ④ `TIMER_ABSTIME`: "그 시각까지" 잠드는 플래그. work() 시간과 깨어나는 지연이 다음 주기로 쌓이지 않는다.
+
+@@ linux-d2-sec5-t1
+두 시계 비교표다. CLOCK_REALTIME 은 벽시계라 NTP 나 사용자가 바꿀 수 있어 로그의 날짜 · 시각에 쓴다. CLOCK_MONOTONIC 은 부팅 후 계속 늘기만 하고 거꾸로 가지 않아 경과 시간 측정과 주기 실행에 쓴다.
+
+@@ linux-d2-sec5-p5-2
+1. 경과 시간 측정에는 거꾸로 가지 않는 CLOCK_MONOTONIC 을 쓴다.
+2. `clock_nanosleep` 에 TIMER_ABSTIME 을 주면 절대 시각까지 잠든다.
+3. 1 ms 는 1,000,000 ns 다.
+4. 상대 sleep 은 매 주기 지연이 더해져 오차가 쌓인다 (예제에서 1000번에 +303 ms).
+
+@@ linux-d2-pdf-p7-1
+5교시 슬라이드의 주기 루프다. 시작 시각을 CLOCK_MONOTONIC 으로 읽고, 매번 일한 뒤 next 에 1 ms 를 더해(넘치면 초로 올림) `clock_nanosleep(..., TIMER_ABSTIME, &next)` 로 그 시각까지 잔다. 상대 sleep 1303 ms(+303) 대 절대 sleep 1000.1 ms(+0.1) 비교가 함께 나온다.
+
+@@ linux-d2-sec5-inline
+- `CLOCK_REALTIME`: 벽시계. 바뀔 수 있어 날짜 · 시각 기록용.
+- `CLOCK_MONOTONIC`: 거꾸로 가지 않는 시계. 경과 시간 · 주기 실행용.
+- `src/06_sleep_drift.c`: 상대 sleep 과 절대 sleep 의 누적 오차 비교 예제.
+- `tv_nsec`: timespec 의 나노초 부분 (0~999,999,999).
+- `tv_sec`: timespec 의 초 부분.
+- `TIMER_ABSTIME`: clock_nanosleep 이 상대 시간이 아니라 절대 시각까지 자게 하는 플래그.
+
+@@ linux-d2-sec6-1
+cgroup v2 를 확인하는 명령이다. `mount | grep cgroup2` 로 cgroup2 가 마운트됐는지, `cat /proc/self/cgroup` 으로 지금 셸이 속한 cgroup 경로(user.slice/… /session-3.scope)를, `ls /sys/fs/cgroup/` 로 트리를, `cgroup.controllers` 로 쓸 수 있는 컨트롤러(cpuset · cpu · io · memory · pids 등)를 본다.
+
+@@ linux-d2-sec6-2
+예제 07 `07_busy.c` 다. 1초 동안 `now_sec()` 로 시간을 확인하며 n 을 계속 늘려 계산량을 센다. 첫 1초의 값을 기준(base)으로 삼아 매초 계산량과 기준 대비 % 를 출력한다. Ctrl+C 로 끝낼 때까지 무한히 반복하는 CPU 부하 프로그램으로 cgroup 실습에 쓴다.
+
+@@ linux-d2-sec6-3
+예제 07 실행 명령이다. 그냥 실행하면 CPU 를 100% 쓰고, `sudo systemd-run --scope -p CPUQuota=20%` 로 실행하면 systemd 가 임시 cgroup(scope)을 만들어 CPU 를 20% 로 제한한다.
+
+@@ linux-d2-sec6-4
+CPUQuota=20% 로 실행한 예제 07 의 출력이다. systemd 가 run-….scope 단위를 만들었다고 알린다. 비율이 100% 로 보이는 이유는 기준인 첫 1초부터 이미 20% 로 제한됐기 때문이다. 제한 없이 실행한 계산량과 비교하면 약 1/5 이다.
+
+@@ linux-d2-sec6-5
+cgroup 을 직접 만드는 강사 시연이다. `/sys/fs/cgroup/lab` 디렉터리를 만들면 cgroup 이 생긴다. `cpu.max` 에 "30000 100000" 을 쓰면 100 ms 마다 30 ms(30%)만 쓸 수 있다. `./07_busy &` 로 띄운 뒤 `$!`(방금 띄운 PID)를 `cgroup.procs` 에 써서 그 cgroup 에 넣고, `cpu.stat` 으로 제한(throttled) 통계를 본다. 끝나면 `kill %1` 로 끄고 `rmdir` 로 cgroup 을 지운다.
+
+@@ linux-d2-sec7-3
+jitter 결과 CSV 에서 통계를 다시 내는 명령이다. `tail -n +2` 로 머리줄을 건너뛰고, `cut -d, -f2` 로 둘째 열(지연)을 뽑아 `sort -n | tail -1` 로 최대값을 구한다. 평균은 `awk -F, '{s+=$2} END {print s/NR}'` 로 둘째 열을 더해 줄 수로 나눈다.
+
+@@ linux-d2-sec6-6
+cgroup 을 만들어 CPU 를 25% 로 제한하는 빈칸 채우기다.
+- 빈칸 ① `25000`: 100,000 µs(100 ms) 주기 중 25 ms 만 쓴다 → 25%.
+- 빈칸 ② `cpu.max`: "쓸 수 있는 시간 주기" 형식의 한도 파일.
+- 빈칸 ③ `$!`: 방금 백그라운드로 띄운 프로세스의 PID.
+- 빈칸 ④ `cgroup.procs`: PID 를 쓰면 그 프로세스가 이 cgroup 으로 옮겨진다.
+- 빈칸 ⑤ `cpu.stat`: 제한당한 횟수 nr_throttled 가 쌓이는 통계 파일.
+
+@@ linux-d2-sec6-t1
+cgroup CPU 파일 표다. `cpu.max` 는 주기(µs)마다 쓸 수 있는 CPU 시간으로 "20000 100000" 이면 20% 다. `cpu.weight` 는 경쟁할 때의 상대 몫(기본 100, 200 이면 두 배)이다. `cpu.stat` 은 실제 사용량과 제한당한 횟수 · 시간(nr_throttled, throttled_usec)을 보여 준다.
+
+@@ linux-d2-sec6-p6-2
+1. cgroup v2 는 `/sys/fs/cgroup` 한 곳에 트리로 보인다.
+2. "20000 100000" 은 100 ms 주기 중 20 ms 다.
+3. 프로세스를 옮길 때는 PID 를 `cgroup.procs` 에 쓴다.
+4. 얼마나 제한당했는지는 `cpu.stat` 의 nr_throttled 로 본다.
+
+@@ linux-d2-pdf-p8-1
+6교시 슬라이드 장면이다. `systemd-run --scope -p CPUQuota=20%` 로 07_busy 를 20% 로 제한해 실행하고, 직접 만든 lab cgroup 의 `cpu.max` 가 "30000 100000"(30%)임을 확인한다.
+
+@@ linux-d2-sec6-inline
+- `/sys/fs/cgroup`: cgroup v2 트리가 보이는 위치.
+- `cpu.max`: 주기마다 쓸 수 있는 CPU 시간 한도 파일.
+- `20000 100000`: 100 ms 중 20 ms, 즉 20%.
+- `cpu.weight`: 경쟁할 때의 상대 몫 (기본 100).
+- `cpu.stat`: 사용량과 제한 통계 파일.
+- `nr_throttled`: 제한당한 횟수.
+- `throttled_usec`: 제한당해 멈춰 있던 총 시간(µs).
+- `src/07_busy.c`: 1초마다 계산량을 출력하는 부하 예제.
+- `25000 100000`: 100 ms 중 25 ms, 즉 25%.
+- `$!`: 마지막으로 백그라운드 실행한 프로세스의 PID.
+- `cgroup.procs`: cgroup 에 속한 PID 목록. PID 를 쓰면 옮겨진다.
+- `20000`: cpu.max 의 앞 숫자, 주기마다 쓸 수 있는 시간(µs).
+
+@@ linux-d2-sec7-1
+측정기 `jitter.c` 다. `getopt` 로 -p 주기(µs) · -n 횟수 · -f FIFO 우선순위 · -c CPU · -o CSV 파일 옵션을 받는다. -c 가 있으면 `sched_setaffinity` 로 CPU 를 고정하고, -f 가 있으면 `sched_setscheduler` 로 SCHED_FIFO 로 바꾼다. 그다음 절대 시각 next 를 주기만큼 늘려 `clock_nanosleep(TIMER_ABSTIME)` 로 자고, 깨어나자마자 now 를 읽어 now − next(늦은 만큼)를 lat 배열에 기록한다. -o 면 회차별 지연을 CSV 로 저장하고, `qsort` 로 정렬해 최소 · 평균 · 99% · 최대 지연(µs)을 출력한다.
+
+@@ linux-d2-sec7-2
+jitter 조합별 측정 명령이다. 부하 없이 SCHED_OTHER 로 한 번 재고, `stress-ng --cpu 2 &` 로 두 vCPU 에 부하를 건 뒤 OTHER, FIFO 80, FIFO 80 + CPU 1 고정 순서로 재서 각각 CSV 로 저장한다. 마지막 `kill %1` 로 stress-ng 를 끈다.
+
+@@ linux-d2-sec7-4
+jitter.c 핵심 부분의 빈칸 채우기다.
+- 빈칸 ① `next`: 깨어나야 할 절대 시각까지 잔다.
+- 빈칸 ② `now`: 깨어나자마자 실제 시각을 읽는다. now − next 가 이번 지연이다.
+- 빈칸 ③ `loops - 1`: 오름차순 정렬 뒤 마지막 인덱스가 최대값.
+- 빈칸 ④ `99`: loops × 99 / 100 번째가 99% 값 (5000번이면 4950).
+
+@@ linux-d2-sec7-t1
+조합별 지연 예시 표(µs)다. 부하가 없으면 OTHER 도 평균 95 · 최대 900 이지만, 부하가 걸리면 OTHER 는 평균 2100 · 최대 8000 으로 크게 나빠진다. FIFO 80 은 부하가 있어도 평균 45 · 최대 600, CPU 1 고정을 더하면 최대 450 으로 가장 안정적이다. 숫자는 PC 마다 다르니 순서를 본다. 부하 없이도 최대가 100 ms 를 넘으면 Hyper-V 문제다.
+
+@@ linux-d2-sec7-p7-2
+1. 실시간 시스템은 가장 나쁜 경우에 실패하므로 최대값(그리고 99% 값)을 본다.
+2. 부하가 있을 때는 SCHED_FIFO 에 CPU 고정을 더한 조합이 가장 안정적이다.
+3. 정렬된 5000개에서 99% 값은 5000 × 99 / 100 = 4950 번째다.
+4. VM 은 호스트가 vCPU 자체를 멈출 수 있어 최대값이 실제 보드보다 크게 튄다.
+
+@@ linux-d2-pdf-p9-1
+7교시 슬라이드 장면이다. `stress-ng --cpu 2 &` 로 부하를 건 뒤 OTHER 와 FIFO 80 + CPU 1 고정으로 jitter 를 재 CSV 로 남긴다. 판단 기준은 부하를 건 상태의 최대 · 99% 값이고, 여러 번 측정해 비교한다.
+
+@@ linux-d2-sec7-inline
+- `src/jitter.c`: 주기 태스크의 깨어남 지연 측정기.
+- `next`: 깨어나야 할 절대 시각.
+- `now`: 실제로 깨어난 시각.
+- `loops - 1`: 정렬된 지연 배열의 마지막 인덱스(최대값).
+- `loops * 99 / 100`: 99% 값의 인덱스.
+
+@@ linux-d2-sec8-1
+오늘 배운 명령 정리 빈칸 채우기다.
+- 빈칸 ① `10`: `nice -n 10` 으로 nice 10 을 주고 실행.
+- 빈칸 ② `renice`: 실행 중인 PID 1234 의 nice 를 5 로 바꾼다.
+- 빈칸 ③ `1`: `taskset -c 1` 로 CPU 1 에 고정.
+- 빈칸 ④ `chrt`: `chrt -f 50` 으로 SCHED_FIFO 50 으로 실행.
+- 빈칸 ⑤ `CPUQuota`: systemd-run 이 임시 cgroup 을 만들어 CPU 를 20% 로 제한한다.
+
+@@ linux-d2-sec8-t1
+Day 2 실험 결과 정리표다. 01 은 잠들면 자발적 전환, 02 는 nice 10 이 9.7% 를 받고, 03 은 vruntime 이 9.31배로 늘어 CFS 공식을 확인한다. 04 는 고정하면 그 CPU 에서만 돌아 예측 가능하지만 노는 CPU 를 못 쓴다. 05 는 RT 에 sudo 가 필요하고 0.95초 제한이 있다. 06 은 상대 sleep +303 ms 대 절대 +0.1 ms, 07 + cgroup 은 20% 제한, jitter 는 FIFO + 고정이 가장 안정적임을 보여 준다.
+
+@@ linux-d2-sec8-t2
+Day 2 핵심 개념 한 줄 정리표다. 컨텍스트 스위치(자발적 · 비자발적), CFS(가장 작은 vruntime 선택), nice · weight(1 차이 ≈ 1.25배, nice 0 = 1024), affinity(예측성 대 유연성), SCHED_FIFO(잠들 때까지 실행, sudo, 0.95초 throttling), 절대 시각 sleep(오차 누적 없음), cgroup cpu.max(주기당 CPU 한도), jitter(최대 · 99% 지연이 실시간 성능)를 묶었다.
+
+@@ linux-d2-sec8-p8-2
+1. RT 태스크가 잠들지 않으면 같은 CPU 의 다른 일을 굶기므로 스스로 잠드는 지점이 꼭 있어야 한다.
+2. AI 추론 같은 무거운 계산은 SCHED_OTHER 로 두고 다른 CPU 에 둔다.
+3. 실시간 성능은 부하를 건 상태의 최대 지연으로 판단한다.
+4. `chrt -p PID` 로 실행 중인 프로세스의 정책과 우선순위를 확인한다.
+
+@@ linux-d2-pdf-p10-1
+8교시 정리 슬라이드다. 임베디드에서 정책을 고르는 다섯 기준: 1) 주기가 짧고 늦으면 안 되는 일(모터 · 센서 · 오디오)만 RT 로, 2) RT 태스크에는 반드시 잠드는 지점(clock_nanosleep), 3) 우선순위는 필요한 만큼만(99 는 커널 스레드 몫), 4) 무거운 계산(AI 추론 · 로그)은 OTHER 로 다른 CPU 에, 5) 부하를 건 상태의 최대 지연으로 판단. 도구는 nice/renice(nice 값) · taskset(CPU 고정) · chrt(RT 정책) · systemd-run(cgroup 한도)이다.
+
+@@ linux-d2-sec8-inline
+- `nice -n 10`: nice 10 으로 프로그램을 시작한다.
+- `renice -n 5 -p PID`: 실행 중인 프로세스의 nice 를 5 로 바꾼다.
+- `taskset -c 1`: CPU 1 에 고정해 실행한다.
+- `chrt -f 50`: SCHED_FIFO 우선순위 50 으로 실행한다 (sudo 필요).
+- `systemd-run --scope -p CPUQuota=20%`: 임시 cgroup 을 만들어 CPU 를 20% 로 제한해 실행한다.
+- `chrt`: 실시간 정책 · 우선순위를 정하거나 확인하는 명령.
+- `chrt -p PID`: 실행 중인 프로세스의 정책과 우선순위를 확인한다.
+
+@@ linux-d2-src-01_ctxsw.c
+예제 01 원본 파일이다. `status_value` 가 `/proc/self/status` 에서 voluntary · nonvoluntary_ctxt_switches 값을 읽는다. sleep 모드는 `usleep(1000)` 을 1000번, busy 모드는 2초 동안 계속 계산하고, 전후 차이로 자발적 · 비자발적 전환 횟수를 출력한다.
+
+@@ linux-d2-src-02_nice_race.c
+예제 02 원본 파일이다. 커널의 nice → weight 표(WEIGHT[40])를 두고, mmap 공유 메모리에 두 자식의 카운트를 받는다. 두 자식을 CPU 0 에 고정하고 B 만 `setpriority` 로 nice 를 올린 뒤 0.2초 후 동시에 출발해 3초 동안 센다. 실제 비율과 weight 로 계산한 예상 비율, 두 weight 를 출력한다. 인자는 B 의 nice(0~19).
+
+@@ linux-d2-src-03_vruntime.c
+예제 03 원본 파일이다. `sched_value` 가 `/proc/self/sched` 에서 "이름 : 값" 줄을 찾아 값을 읽는다. 0.5초씩 4번 계산하며 구간마다 `se.sum_exec_runtime`(실제 실행 시간)과 `se.vruntime` 의 증가량, 그 비율을 출력한다. 비율 ≈ 1024 / weight 로 nice 0 은 1.00, nice 10 은 9.31 이다.
+
+@@ linux-d2-src-04_affinity.c
+예제 04 원본 파일이다. 온라인 CPU 수와 허용 CPU 목록(`sched_getaffinity`)을 출력하고, 인자로 CPU 번호를 주면 `sched_setaffinity` 로 고정한 뒤 다시 출력한다. 0.2초씩 바쁘게 돌며 `sched_getcpu()` 로 실행 중인 CPU 번호를 15번 찍는다.
+
+@@ linux-d2-src-05_rt_policy.c
+예제 05 원본 파일이다. 현재 정책, FIFO 우선순위 범위, RT throttling 값을 출력한 뒤 `sched_setscheduler` 로 SCHED_FIFO(기본 우선순위 50)로 바꾼다. 일반 사용자는 EPERM 으로 실패하고, sudo 로 성공하면 변경된 정책을 확인하고 10초 동안 기다려 `chrt -p` 로 볼 수 있게 한다.
+
+@@ linux-d2-src-06_sleep_drift.c
+예제 06 원본 파일이다. 1 ms 주기 × 1000번, 매 주기 0.2 ms 일하는 루프를 상대 `nanosleep` 과 절대 `clock_nanosleep(TIMER_ABSTIME)` 두 방식으로 돌려 총 시간과 목표 대비 오차를 비교한다. `add_ns` 는 timespec 에 ns 를 더하고 초로 올림을 처리한다.
+
+@@ linux-d2-src-07_busy.c
+예제 07 원본 파일이다. 1초마다 계산 횟수를 세어 첫 1초 대비 % 와 함께 출력하는 무한 루프 부하 프로그램이다. systemd-run CPUQuota 나 직접 만든 cgroup 의 cpu.max 로 제한했을 때 계산량이 줄어드는 것을 본다. Ctrl+C 로 끝낸다.
+
+@@ linux-d2-src-Makefile
+Day 2 공통 Makefile 이다. 폴더의 모든 .c 파일을 찾아(`wildcard`) 같은 이름의 실행 파일로 만든다. `make` 는 전부 빌드, `make 이름` 은 하나만, `make clean` 은 실행 파일을 지운다. 컴파일 옵션은 `-Wall -Wextra -g`(경고 모두 켜기 + 디버그 정보)다.
+
+@@ linux-d2-src-jitter.c
+측정기 jitter.c 원본 파일이다. 옵션 -p(주기 µs) · -n(횟수) · -f(FIFO 우선순위) · -c(고정 CPU) · -o(CSV)를 받아 정책과 affinity 를 정한 뒤, 절대 시각으로 주기마다 자고 깨어난 지연을 기록한다. 결과를 정렬해 최소 · 평균 · 99% · 최대 지연(µs)을 출력하고, -o 면 회차별 지연을 CSV 로 저장한다.
+
+@@ linux-d2-src-stallwatch.c
+VM 진단 도구 stallwatch.c 원본 파일이다. CPU 를 쉬지 않고 돌며 `clock_gettime` 을 연속으로 읽는다. 연속 두 번 읽은 사이가 5 ms 이상 벌어지면 그동안 이 프로세스가 실행되지 못한 것이다. 게스트 안에 경쟁자가 없는데도 자주 생기면 호스트(Windows · Hyper-V)가 vCPU 를 멈춘 것이다. 인자는 감시 시간(초, 기본 20)이다.

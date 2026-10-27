@@ -4,6 +4,7 @@
  *  - 코드 부분: 빈칸을 와일드카드로 보고 IDF 가중 LCS 로 정리본 코드 줄과 맞춘다.
  *    맞춰진 앞뒤 토큰 사이에 있는 코드가 빈칸 정답 후보가 된다. 같은 후보끼리 묶어 보여준다.
  *  - 주석 부분(설명): 한글 2글자 조각으로 정리본 주석 · 괄호 넣기 문장과 비교해 힌트 점수로 쓴다.
+ *    주석이 있으면 주석이 맞는 쪽을 단순 빈도(같은 답이 여러 곳에 나온 정도)보다 우선한다.
  *  - 주석만 있는 줄이 이어지면(TODO 설명) 하나의 묶음으로 보고, 설명에 나온 함수 · 변수 이름과
  *    한글 설명이 많이 겹치는 코드 조각을 찾아준다.
  */
@@ -35,6 +36,10 @@
   ].join('|'), 'g');
 
   const PUNCT_W = 0.15;   // 괄호 · 세미콜론 같은 기호 가중치
+  // 검색어 줄에 주석(설명)이 있으면 주석이 맞는 줄을 여러 곳에 나오는 흔한 답보다 앞에 둔다
+  const COMMENT_W = 1.0;        // 주석이 비슷한 정도 (주석이 없으면 0.25)
+  const MENTION_W = 0.5;        // 주석에 그 후보 값이 그대로 적혀 있을 때 (# nice 10 으로 실행 → 10)
+  const FREQ_W = 0.04;          // 같은 후보가 나온 곳의 수 — 주석이 있으면 쓰지 않는다
 
   function isWord(t) { return /^[A-Za-z_$가-힣0-9]/.test(t); }
   function isIdent(t) { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(t); }
@@ -102,7 +107,7 @@
     ['잠금', ['lock', 'mutex']], ['잠그', ['lock']], ['잡', ['lock', 'take']], ['풀', ['unlock', 'give', 'release']], ['요청', ['request']],
     ['반납', ['release', 'free', 'close']], ['해제', ['free', 'release', 'unlock']], ['값', ['value', 'val']], ['라인', ['line']],
     ['시간', ['time', 'ms', 'us', 'ns']], ['시각', ['time', 'timestamp']], ['보내', ['send', 'write']], ['받', ['receive', 'recv', 'read']],
-    ['깨우', ['signal', 'notify', 'broadcast', 'give']], ['알리', ['signal', 'notify']], ['소리', ['tone', 'buz']], ['주파수', ['tone', 'freq', 'frequency']],
+    ['깨우', ['signal', 'notify', 'broadcast', 'give']], ['깨움', ['signal', 'notify', 'broadcast']], ['깨워', ['signal', 'notify', 'broadcast']], ['알리', ['signal', 'notify']], ['소리', ['tone', 'buz']], ['주파수', ['tone', 'freq', 'frequency']],
     ['방향', ['direction', 'dir']], ['입력', ['input', 'in']], ['출력', ['output', 'out', 'print']], ['이어', ['append']], ['끝에', ['append', 'end']],
     ['링크', ['link', 'lstat', 'readlink', 'symlink']], ['종료', ['exit', 'status', 'term']], ['쓰레드', ['thread', 'pthread']], ['스레드', ['thread', 'pthread']],
     ['상태', ['status', 'state']], ['밝기', ['duty', 'write', 'pwm']], ['듀티', ['duty']], ['분해능', ['resolution', 'bits']], ['속도', ['baud', 'speed']],
@@ -120,6 +125,16 @@
   function koHints(comment) {
     const out = new Set();
     KO_EN.forEach(([ko, en]) => { if (comment.includes(ko)) en.forEach(e => out.add(e)); });
+    return out;
+  }
+
+  // 주석에 적힌 숫자 · 이름 (GPIO17 → gpio17, 17) — 빈칸 후보와 그대로 같으면 정답일 가능성이 크다
+  function mentions(comment) {
+    const out = new Set();
+    for (const w of String(comment).match(/0[xX][0-9a-fA-F]+|[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?/g) || []) {
+      out.add(w.toLowerCase());
+      (w.match(/\d+/g) || []).forEach(d => out.add(d));
+    }
     return out;
   }
 
@@ -282,7 +297,7 @@
     const low = toks.map(t => t === BLANK ? BLANK : t.toLowerCase());
     const w = low.map(t => t === BLANK ? 0 : idf(t));
     const total = w.reduce((a, b) => a + b, 0);
-    return { raw, code, comment, toks, low, w, total, blanks: toks.filter(t => t === BLANK).length, grams: hintGrams(comment), koHints: koHints(comment) };
+    return { raw, code, comment, toks, low, w, total, blanks: toks.filter(t => t === BLANK).length, grams: hintGrams(comment), koHints: koHints(comment), mentions: mentions(comment) };
   }
 
   // 붙여넣은 글을 "코드 줄" 과 "설명 묶음(주석만 있는 줄들)" 으로 나눈다
@@ -347,7 +362,7 @@
       s *= 1 / (1 + 0.02 * extra);
       const hint = q.grams.size ? Math.max(gramSim(q.grams, line.grams), 0.6 * gramSim(q.grams, INDEX.snippets[line.si]._grams)) : 0;
       const anc = q.blanks ? anchorScore(q, r.match, line) : 0;
-      let total = s + 0.6 * anc + 0.25 * hint + 0.15 * (ctxScore.get(line.si) || 0);
+      let total = s + 0.6 * anc + (q.grams.size ? COMMENT_W : 0.25) * hint + 0.15 * (ctxScore.get(line.si) || 0);
       if (INDEX.snippets[line.si].kind === 'exam') total *= 0.7;   // 시험지 자신의 줄은 정리본이 없을 때만 앞에 오게
       else if (INDEX.snippets[line.si].kind === 'table') total *= 0.85;   // 표의 행은 같은 점수의 코드 줄 뒤로
       hits.push({ line, s, hint, total, match: r.match });
@@ -372,7 +387,8 @@
       g.count++;
       if (g.examples.length < 3 && !g.examples.some(e => e.line.raw.trim() === h.line.raw.trim())) g.examples.push(h);
     }
-    // 묶음 점수: 가장 좋은 줄 + 여러 곳에서 쓰인 정도 + 괄호 넣기 정답과 같은지 - 지나치게 긴 조각
+    // 묶음 점수: 가장 좋은 줄(주석이 맞는 정도 포함) + 주석에 그 값이 적혔는지 + 괄호 넣기 정답과 같은지
+    //   - 지나치게 긴 조각. 여러 곳에서 쓰인 정도(빈도)는 주석이 없을 때만 조금 더한다
     groups.forEach(g => {
       const key = g.fills.map(x => (x || '').replace(/\s+/g, '').toLowerCase()).join('');
       const long = g.fills.some(x => x && (x.match(TOKEN_RE) || []).length > 8);
@@ -386,7 +402,9 @@
         const subs = subTokens(x.replace(/[^A-Za-z0-9_]+/g, '_'));
         q.koHints.forEach(k => { if (subs.includes(k) || (k.length >= 4 && low.includes(k))) ko++; });
       });
-      g.score = g.best.total + Math.min(0.45, 0.15 * ko) + 0.04 * Math.log2(1 + g.count) + (hintAns.has(key) ? 0.4 * hintAns.get(key) + 0.25 : 0) - (long ? 0.2 : 0) - (notName ? 0.3 : 0);
+      const said = q.mentions.size && g.fills.some(x => x && q.mentions.has(x.replace(/\s+/g, '').toLowerCase()));
+      const hasComment = q.grams.size || q.mentions.size;
+      g.score = g.best.total + Math.min(0.45, 0.15 * ko) + (said ? MENTION_W : 0) + (hasComment ? 0 : FREQ_W * Math.log2(1 + g.count)) + (hintAns.has(key) ? 0.4 * hintAns.get(key) + 0.25 : 0) - (long ? 0.2 : 0) - (notName ? 0.3 : 0);
       g.fromHint = hintAns.has(key);
     });
     groups.sort((a, b) => b.score - a.score);

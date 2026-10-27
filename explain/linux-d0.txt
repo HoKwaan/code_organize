@@ -1,0 +1,73 @@
+@@ linux-api-0
+강의 코드에서 파일을 여는 방법을 모은 것이다. 저수준 `open()` 은 fd(정수)를, 표준 입출력 `fopen()` 은 `FILE *` 을 돌려준다.
+- `O_RDONLY` · `O_WRONLY` · `O_RDWR` 중 하나로 읽기/쓰기 방향을 정한다.
+- `O_CREAT` 는 없으면 만들기, `O_TRUNC` 는 있으면 길이 0 으로 비우기다. O_CREAT 를 쓰면 세 번째 인자로 권한(예: `0644` = rw-r--r--)을 준다.
+- `O_SYNC` 는 write 할 때마다 디스크까지 기록해 느리지만 안전하다.
+- `fopen` 모드: "r" 읽기, "w" 새로 쓰기(기존 내용 삭제), "a" 끝에 이어 쓰기.
+실패하면 open 은 -1, fopen 은 NULL 을 돌려주므로 반드시 검사한다.
+
+@@ linux-ref-0
+강의 자료에 없는 open 플래그 · lseek 보충이다.
+- `O_APPEND`: 매 write 가 항상 파일 끝에 붙는다 (로그용).
+- `O_CREAT | O_EXCL`: 이미 있으면 실패(EEXIST)해 새 파일만 만든다.
+- `O_NONBLOCK`: 읽을 데이터가 없으면 기다리지 않고 바로 돌아온다 (EAGAIN).
+- `lseek(fd, off, SEEK_SET/SEEK_CUR/SEEK_END)`: 파일 안 읽기/쓰기 위치를 처음 · 현재 · 끝 기준으로 옮긴다. `lseek(fd, 0, SEEK_END)` 의 반환값이 파일 크기다.
+
+@@ linux-api-1
+강의 코드의 errno · 오류 처리 모음이다. 시스템 콜은 실패하면 -1 을 돌려주고 전역 `errno` 에 원인 번호를 넣는다.
+- `perror(msg)`: "msg: 원인 문장" 을 stderr 에 출력한다. `strerror(errno)` 는 원인 문장 문자열을 돌려준다.
+- `ENOENT` 없음, `EISDIR` 디렉터리를 파일처럼 엶, `EACCES` 권한 없음, `EBADF` 잘못된(닫힌) fd, `EINVAL` 잘못된 인자, `ENOMEM` 메모리 부족.
+- `EINTR`: 시그널 때문에 중단됨 → 같은 호출을 다시 시도한다.
+- `EBUSY`: 다른 쪽이 이미 쓰는 중 (예: 이미 export 된 PWM 채널은 오류로 보지 않음).
+- 커널 코드에서는 `return -ENOMEM;` 처럼 음수 errno 를 돌려준다.
+
+@@ linux-ref-1
+강의 자료에 없는 errno 보충이다.
+- `ENOTDIR`: 경로 중간이 디렉터리가 아님.
+- `EEXIST`: 이미 있음 (O_EXCL, mkdir).
+- `EAGAIN`: 논블로킹에서 지금은 데이터 없음 — 나중에 다시.
+- `ECHILD`: 기다릴 자식 프로세스가 없음 (wait).
+
+@@ linux-api-2
+강의 코드의 stat 계열 · 파일 종류 매크로 모음이다.
+- `stat()` 은 심볼릭 링크를 따라가 대상의 정보를, `lstat()` 은 링크 자체의 정보를, `fstat(fd, &st)` 는 열린 fd 의 정보를 `struct stat` 에 채운다.
+- `S_ISDIR(m)` 디렉터리, `S_ISLNK(m)` 심볼릭 링크 (lstat 으로 읽어야 참이 될 수 있다).
+- `readlink()` 는 링크가 가리키는 경로를 읽는데 끝에 '\0' 을 붙여 주지 않아 직접 붙인다 (그래서 `sizeof - 1`).
+- `unlink(path)` 는 이름(링크) 하나를 지운다. 링크 수가 0 이 되고 연 곳이 없으면 실제로 삭제된다.
+- `st_size` 크기(바이트), `st_ino` inode 번호, `st_nlink` 하드 링크 수다.
+
+@@ linux-ref-2
+강의 자료에 없는 stat 보충이다.
+- `S_ISREG()` 일반 파일인가, `S_ISCHR()` 문자 장치(/dev/tty 등)인가.
+- `symlink(target, linkpath)` 는 심볼릭 링크(경로를 담은 별도 파일)를 만든다.
+- `link(old, new)` 는 하드 링크(같은 inode 를 가리키는 이름)를 하나 더 만든다.
+
+@@ linux-api-3
+강의 코드의 프로세스 생성 · 대기 함수 모음이다.
+- `fork()` 는 자식이면 0, 부모면 자식 PID, 실패면 -1 을 돌려준다.
+- `wait(NULL)` 은 아무 자식 하나가 끝나길 기다려 회수하고, `waitpid(pid, &status, 0)` 은 특정 자식을 기다린다. `WNOHANG` 을 주면 끝난 자식이 없을 때 기다리지 않고 0 을 돌려준다 (좀비 정리 루프).
+- `WIFEXITED` · `WEXITSTATUS` 로 정상 종료와 종료 코드(0~255)를, `WIFSIGNALED` · `WTERMSIG` 로 시그널 종료와 번호를 꺼낸다. 셸 관례로 시그널 종료는 128 + 번호.
+- `execvp(file, argv)` 는 PATH 에서 프로그램을 찾아 지금 프로세스를 그 프로그램으로 바꾼다. 성공하면 돌아오지 않는다.
+- exec 실패 시 자식은 `_exit()` 로 끝낸다 (부모에게서 복사된 stdio 버퍼를 두 번 비우지 않게). `exit()` 는 버퍼를 비우고 끝낸다.
+- `getpid()` 내 PID, `getppid()` 부모 PID.
+
+@@ linux-ref-3
+강의 자료에 없는 exec 보충이다. `execlp("ls", "ls", "-l", NULL)` 은 인자를 배열 대신 하나씩 나열하고 NULL 로 끝낸다. 첫 "ls" 는 찾을 프로그램, 둘째 "ls" 는 argv[0] 이다.
+
+@@ linux-api-4
+강의 코드의 pthread 동기화 함수 모음이다.
+- `pthread_create(&t, NULL, 함수, 인자)` 로 쓰레드를 만들고 `pthread_join(t, &ret)` 으로 끝나길 기다려 반환값을 받는다.
+- mutex: `pthread_mutex_lock` 은 잡혀 있으면 기다리고, `pthread_mutex_trylock` 은 기다리지 않고 실패(EBUSY)한다. `unlock` 으로 푼다. `PTHREAD_MUTEX_INITIALIZER` 로 정적 초기화한다.
+- 조건 변수: `pthread_cond_wait(&cv, &m)` 은 mutex 를 풀고 잠들었다가 깨면 다시 잡는다. `timedwait` 은 절대 시각까지만 기다린다. `signal` 은 하나, `broadcast` 는 모두 깨운다.
+- 세마포어: `sem_init(&s, 0, n)` 초기값 n, `sem_wait` 은 0 이면 기다렸다가 1 줄이고(P), `sem_post` 는 1 늘린다(V).
+- `pthread_self()` 는 내 쓰레드 ID 이고, `pthread_setaffinity_np` 로 실행할 CPU 를 고정한다.
+
+@@ linux-ref-4
+강의 자료에 없는 pthread 보충이다. `pthread_detach(t)` 는 join 하지 않을 쓰레드로 표시해 끝나면 자원이 자동 정리되게 한다. `pthread_exit(NULL)` 은 프로세스 전체가 아니라 지금 쓰레드만 끝낸다.
+
+@@ linux-api-5
+강의 코드의 시그널 함수 모음이다.
+- `signal(SIGINT, handler)` 는 Ctrl+C 에 핸들러를 건다. `SIG_IGN` 은 무시, `SIG_DFL` 은 기본 동작으로 되돌리기.
+- `sigaction(sig, &sa, NULL)` 은 권장 등록 방식이다. `sigemptyset(&sa.sa_mask)` 로 핸들러 실행 중 막을 시그널을 비운다.
+- `SIGTERM` 은 정상 종료 요청(잡을 수 있음), `SIGKILL` 은 강제 종료(막을 수 없음)다.
+- `alarm(3)` 은 3초 뒤 SIGALRM 을 보내고, `pause()` 는 시그널이 올 때까지 잠든다.

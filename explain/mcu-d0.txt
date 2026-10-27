@@ -1,0 +1,17 @@
+@@ mcu-api-6
+MCU 강의 코드에서 Arduino / ESP32 기본 함수를 쓰는 줄을 하나씩 모은 표다. 줄마다 오른쪽 주석에 뜻과 출처(Day · 교시)가 있고, 아래 '줄마다 강의 출처' 링크로 원래 예제에 갈 수 있다. 빈칸 시험에 자주 나오는 것을 묶어 보면 다음과 같다.
+- 핀 설정: `pinMode(pin, OUTPUT / INPUT / INPUT_PULLUP)`. INPUT_PULLUP 은 안 누르면 HIGH, 누르면 LOW. ESP32 는 `INPUT_PULLDOWN` 도 있다.
+- 디지털 입출력: `digitalWrite(pin, HIGH/LOW)`, `digitalRead(pin)`.
+- 아날로그 입력: `analogRead(pin)` 은 12비트 0~4095, `analogReadMilliVolts(pin)` 은 보정된 mV.
+- 시리얼: `Serial.begin(115200)`(시리얼 모니터와 같은 속도), `Serial.println`, `Serial.printf`.
+- 시간: `delay(ms)`, `delayMicroseconds(us)`, `millis()`(부팅 후 ms), `micros()`(부팅 후 µs).
+- PWM · 소리(core 3.x): `ledcAttach(pin, freq, bits)`, `ledcWrite(pin, duty)`, `ledcWriteTone(pin, freq)`(0 이면 끄기).
+- 인터럽트: `attachInterrupt(digitalPinToInterrupt(pin), isr, FALLING/RISING/CHANGE)`.
+- 배열 개수: `sizeof(arr) / sizeof(arr[0])`. 값 범위 바꾸기: `map(x, in_lo, in_hi, out_lo, out_hi)`.
+
+@@ mcu-ref-6
+강의 자료(강의 페이지 · src · PDF · md)에는 나오지 않지만 같은 계열이라 알아 두면 좋은 표준 Arduino / ESP32 함수다 (보충).
+- `ledcDetach(pin)`: ledcAttach 로 붙인 PWM 을 떼어 핀을 다시 일반 GPIO 로 돌린다.
+- `tone(pin, freq, ms)`: Arduino 공통 함수로 주파수 소리를 ms 동안 낸다. `noTone(pin)` 으로 끈다. 강의는 ledcWriteTone 을 쓴다.
+- `detachInterrupt(digitalPinToInterrupt(pin))`: attachInterrupt 로 등록한 인터럽트를 해제한다.
+- `constrain(x, lo, hi)`: x 를 lo~hi 범위 안으로 자른다 (작으면 lo, 크면 hi).

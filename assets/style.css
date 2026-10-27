@@ -182,3 +182,9 @@ ol.refs { margin: 4px 0; padding-left: 2.6em; line-height: 1.7; }
 .exact .q-ans { padding: 2px 0; }
 .exact .qline-q code { font-size: 13px; white-space: pre-wrap; word-break: break-all; }
 @media (max-width: 820px) { .q-ans, .q-res { padding-left: 12px; } .q-show, .q-btn { margin-left: 12px; } }
+.explain { margin: 8px 0 10px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--accent-bg); border-radius: 0 8px 8px 0; font-size: 14px; }
+.explain-h { font-weight: 700; font-size: 13px; color: var(--accent); margin-bottom: 2px; }
+.explain p { margin: 4px 0; }
+.explain ul, .explain ol { margin: 4px 0; padding-left: 22px; }
+.explain li { margin: 2px 0; }
+.explain code { font-size: 12.5px; background: var(--code-bg); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }

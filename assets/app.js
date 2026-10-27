@@ -11,6 +11,7 @@
   const examById = Object.fromEntries((DATA.exams || []).map(s => [s.id, s]));
   const KIND_LABEL = { fill: '빈칸 채우기', quiz: '괄호 넣기', inline: '본문 코드', src: '소스 파일', pdf: 'PDF 슬라이드', table: '표', ref: '보충', api: '강의 코드 모음', exam: '양식' };
   const kindOf = sn => (sn.kind === 'ref' && sn.refs ? 'api' : sn.kind);
+  const EXPLAIN = window.CODE_EXPLAIN || {};
 
   window.CodeSearch.build(DATA);
 
@@ -67,6 +68,26 @@
     return `<div class="code${opts.compact ? ' compact' : ''}"><div class="code-h">${label}<button type="button" class="copy">복사</button></div><pre><code class="hljs">${rows}</code></pre><textarea class="raw" hidden>${esc(code)}</textarea></div>`;
   }
 
+  // 설명 글: 빈 줄로 문단, '- ' 글머리 목록, 'N. ' 번호 목록, `…` 코드 글자 (tools/explain.js 참고)
+  function explainBox(id) {
+    const t = EXPLAIN[id];
+    if (!t) return '';
+    const inl = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+    let out = '', list = null;
+    const close = () => { if (list) { out += `</${list}>`; list = null; } };
+    t.split('\n').forEach(l => {
+      const b = l.match(/^\s*- (.*)$/), n = l.match(/^(\d+)\. (.*)$/);
+      if (b || n) {
+        const tag = b ? 'ul' : 'ol';
+        if (list !== tag) { close(); out += `<${tag}>`; list = tag; }
+        out += n ? `<li value="${n[1]}">${inl(n[2])}</li>` : `<li>${inl(b[1])}</li>`;
+      } else if (!l.trim()) close();
+      else { close(); out += `<p>${inl(l)}</p>`; }
+    });
+    close();
+    return `<div class="explain"><div class="explain-h">설명</div>${out}</div>`;
+  }
+
   function blankLines(sn) {
     const s = new Set();
     if (sn.blank) sn.blank.split('\n').forEach((l, i) => { if (/_{3,}/.test(l)) s.add(i); });
@@ -92,6 +113,7 @@
     return `<section class="snip" id="sn-${esc(sn.id)}">${head}
       ${sn.desc ? `<p class="desc">${esc(sn.desc)}</p>` : ''}
       ${codeBlock(sn.code, sn.kind === 'quiz' || sn.kind === 'inline' ? 'text' : lang, { marks, label, compact: opts.compact })}
+      ${explainBox(sn.id)}
       ${extra}
       <div class="src">${sn.url ? `<a href="${esc(sn.url)}" target="_blank" rel="noopener">${esc(sn.source || '원본')}</a>` : esc(sn.source || '')}</div>
     </section>`;
