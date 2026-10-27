@@ -1,0 +1,585 @@
+@@ mcu-d4-intro-t1
+Day 4 시간표다. 1교시 FreeRTOS 태스크, 2교시 큐 · 뮤텍스, 3교시 ISR → 태스크 알림 · 소프트웨어 타이머, 4교시 LittleFS 파일 저장, 5교시 Wi-Fi · 시간 · AP 모드, 6교시 웹 서버, 7교시 디버깅(로그 · 크래시 해독 · 재부팅 원인), 8교시 종합 프로젝트(IoT 환경 모니터)다. 각 교시마다 anim/index.html 의 D4-N 애니메이션이 짝지어져 있다.
+
+@@ mcu-d4-intro-t2
+Day 4 공통 배선표다. 배선도 한 장을 한 번만 꽂고 끝까지 쓴다.
+- 가변저항 GPIO34 (1 · 2 · 4 · 6 · 8교시)
+- DHT11 신호 GPIO27 (2 · 4 · 6 · 8교시)
+- 버튼 GPIO4, 대각선 연결 + `INPUT_PULLUP` (3 · 7 · 8교시)
+- LED 빨강 GPIO25 · 초록 GPIO26, 각각 220Ω
+Day 4 는 5V 레일을 쓰지 않는다. FreeRTOS · LittleFS · WiFi · WebServer 는 ESP32 코어에 들어 있어 새로 설치할 라이브러리가 없다.
+
+@@ mcu-d4-intro-inline
+Day 4 개요 본문에 나온 코드 조각이다.
+- `"YOUR_SSID"`: 5 · 6교시 코드에서 Wi-Fi 이름으로 바꿔 넣을 자리.
+- `"YOUR_PASS"`: Wi-Fi 비밀번호로 바꿔 넣을 자리.
+- `____`: 빈칸 채우기에서 채울 자리 표시.
+- `Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)`: 도구 → Partition Scheme 에서 골라야 하는 방식. 이름은 SPIFFS 지만 LittleFS 가 이 영역을 쓴다.
+- `No FS`: 파일 시스템 영역이 없는 방식. 고르면 LittleFS 가 동작하지 않는다.
+
+@@ mcu-d4-sec1-1
+FreeRTOS 태스크 두 개로 LED 두 개를 서로 다른 주기로 깜빡인다.
+- 태스크 함수는 `void f(void *param)` 모양이고 `for (;;)` 로 끝나지 않는다.
+- `vTaskDelay(pdMS_TO_TICKS(300))` 은 이 태스크를 300 ms 재우고 CPU 를 다른 태스크에 넘긴다. `pdMS_TO_TICKS` 는 ms 를 틱으로 바꾼다.
+- `xTaskCreatePinnedToCore(함수, 이름, 스택, 매개변수, 우선순위, 핸들, 코어)` 로 태스크를 만든다. 여기서는 스택 2048 바이트, 우선순위 1, 코어 1.
+- loop 도 loopTask 라는 태스크라서 2초마다 시리얼에 출력하며 함께 돈다.
+Day 1 의 millis() 비교로도 되지만, 태스크로 나누면 각 동작이 자기 루프만 신경 쓰면 된다. Arduino-ESP32 의 delay() 도 속은 vTaskDelay 다.
+
+@@ mcu-d4-sec1-2
+태스크의 우선순위 · 스택 사용량 · 힙 여유를 확인한다.
+- `TaskHandle_t hWork` 로 만든 태스크의 핸들을 받아 둔다 (`&hWork`).
+- taskWork 는 우선순위 2, 스택 3072 바이트이고, 지역 배열 `char buf[64]` 는 스택을 쓴다.
+- `uxTaskGetStackHighWaterMark(hWork)` 는 지금까지 스택이 가장 많이 찼을 때 남아 있던 양(바이트)이다. 수백 바이트 이하로 떨어지면 스택을 늘린다.
+- `xPortGetCoreID()` 는 지금 코드가 도는 코어, `ESP.getFreeHeap()` 은 남은 힙이다. 태스크 스택은 힙에서 가져오므로 태스크가 많을수록 힙이 준다.
+
+@@ mcu-d4-sec1-3
+태스크 함수 하나를 매개변수만 바꿔 두 번 재사용한다.
+- 빈칸 ① `blink_cfg_t`: `void *param` 을 원래 구조체 포인터 타입으로 바꾼다.
+- 빈칸 ② `pin`: 자기 핀의 현재 값을 읽어 뒤집는다.
+- 빈칸 ③ `&red`: 빨강 설정 구조체의 주소를 넘긴다. 전역 변수라 태스크보다 오래 살아서 안전하다.
+- 빈칸 ④ `portMAX_DELAY`: loop 에 할 일이 없으니 영원히 재운다.
+`void *` 는 "아무 타입의 주소"다 (C 과정 Day 3).
+
+@@ mcu-d4-sec1-t1
+`xTaskCreatePinnedToCore` 의 주요 인자 설명표다.
+- 스택 2048: ESP32 FreeRTOS 는 바이트 단위다. printf · String 을 쓰면 4096 이상을 준다.
+- 우선순위 1: 클수록 먼저 실행된다. loopTask 는 1, idle 태스크는 0 이다.
+- 코어 1: 코어 0 은 Wi-Fi · Bluetooth 가 주로 쓰고, 코어 1 은 loopTask 가 도는 코어다.
+
+@@ mcu-d4-sec1-t2
+태스크 함정 표다.
+- `for (;;)` 안에 vTaskDelay 가 없으면 같은 코어의 낮은 우선순위 태스크가 실행되지 못하고(굶음) 워치독 경고 · 재부팅이 날 수 있다.
+- 태스크 함수가 return 으로 끝나면 재부팅된다 → 끝내지 않거나 `vTaskDelete(NULL)` 로 스스로 지운다.
+- 스택 1024 에 Serial.printf 를 쓰면 "Stack canary watchpoint triggered" 로 재부팅된다 (7교시).
+- 지역 변수 주소를 매개변수로 넘기면 setup 이 끝난 뒤 사라진 메모리를 가리킨다 → 전역 · static 변수 주소를 넘긴다.
+
+@@ mcu-d4-sec1-p1-2
+FreeRTOS 태스크 기본을 확인하는 괄호 넣기다.
+1. setup · loop 도 loopTask 라는 FreeRTOS 태스크 안에서 돈다.
+2. 태스크를 재우고 CPU 를 넘기는 함수는 `vTaskDelay(pdMS_TO_TICKS(ms))` 다.
+3. ESP32 의 `xTaskCreatePinnedToCore` 스택 크기 단위는 바이트다 (원래 FreeRTOS 는 워드).
+4. 스택이 가장 많이 찼을 때 남은 양은 `uxTaskGetStackHighWaterMark` 로 본다.
+
+@@ mcu-d4-pdf-p4-1
+슬라이드 p.4 의 태스크 요약이다. 태스크는 자기 스택을 가진 작은 loop 다.
+- `taskRed` 는 `for (;;)` 로 끝나지 않고, `vTaskDelay(pdMS_TO_TICKS(300))` 으로 자는 동안 다른 태스크가 돈다.
+- `xTaskCreatePinnedToCore(taskRed, "red", 2048, NULL, 1, NULL, 1)` 의 인자는 함수 · 이름 · 스택(바이트) · 매개변수 · 우선순위 · 핸들 · 코어다.
+슬라이드의 실수 표: vTaskDelay 없는 루프는 굶음 · 워치독, return 은 재부팅(→ vTaskDelete(NULL)), 지역 변수 주소 param 은 사라진 메모리, 스택 1024 + printf 는 Stack canary 크래시.
+
+@@ mcu-d4-sec1-inline
+1교시(FreeRTOS 태스크) 본문에 나온 코드 조각이다.
+- `xTaskCreatePinnedToCore`: 코어를 지정해 태스크를 만드는 함수.
+- `delay`: Arduino 의 기다리기 함수. ESP32 에서는 속이 vTaskDelay 다.
+- `vTaskDelay`: 이 태스크를 재우고 CPU 를 다른 태스크에 넘긴다.
+- `void *`: 아무 타입의 주소. 태스크 매개변수 타입이다.
+- `setup()`: loopTask 안에서 처음 한 번 실행된다.
+- `loop()`: loopTask 안에서 반복 실행된다.
+- `two_tasks.ino`: 예제 1-1 두 태스크 · 두 LED 스케치.
+- `millis()`: Day 1 의 시간 비교 방식. 태스크 없이 여러 주기를 다룰 때 썼다.
+- `delay()`: 태스크 안에서도 동작하지만 의도가 드러나는 vTaskDelay 를 쓴다.
+- `printf`: 스택을 많이 쓰므로 태스크 스택을 4096 이상 준다.
+- `String`: 역시 스택 · 힙을 많이 써서 스택을 넉넉히 준다.
+- `task_info.ino`: 예제 1-2 우선순위 · 스택 확인 스케치.
+- `getFreeHeap()`: 남은 힙 바이트. 태스크가 많을수록 준다.
+- `for (;;) { … }`: 끝나지 않는 태스크 루프. 안에 vTaskDelay 가 없으면 다른 태스크가 굶는다.
+- `return`: 태스크 함수가 return 으로 끝나면 재부팅된다.
+- `vTaskDelete(NULL)`: 태스크가 스스로를 지운다.
+- `Serial.printf`: 스택 1024 에서 쓰면 Stack canary 크래시가 난다.
+- `Stack canary watchpoint triggered`: 스택 넘침을 잡은 크래시 메시지.
+- `portMAX_DELAY`: 무한히 기다리기. 할 일 없는 loop 를 영원히 재운다.
+- `setup`: loopTask 에서 먼저 실행되는 함수.
+- `loop`: loopTask 에서 반복되는 함수.
+- `____(pdMS_TO_TICKS(ms))`: 괄호 넣기 2번. 답은 `vTaskDelay`.
+- `uxTaskGetStack____`: 괄호 넣기 4번. 답은 `HighWaterMark`.
+
+@@ mcu-d4-sec2-1
+큐로 센서 태스크(생산자)가 값을 보내고 표시 태스크(소비자)가 받는다.
+- `sample_t` 는 ADC 값과 측정 시각을 묶은 구조체다.
+- `xQueueCreate(8, sizeof(sample_t))` 로 sample_t 8칸짜리 큐를 만든다. 태스크보다 먼저 만든다.
+- 생산자는 100 ms 마다 `xQueueSend(q, &s, 0)` 으로 보낸다. 대기 시간 0 이라 큐가 가득 차면 기다리지 않고 버린다 (pdTRUE 가 아니면 실패).
+- 소비자는 `xQueueReceive(q, &s, portMAX_DELAY)` 로 데이터가 올 때까지 잠들어 CPU 를 쓰지 않는다. 받으면 LED 밝기(raw / 16)와 지연 시간(age)을 출력한다.
+- 큐는 값을 복사해서 넣고 꺼내므로 보내는 쪽 지역 변수가 사라져도 안전하다. Day 1 의 폴링 대신 기다림이다.
+
+@@ mcu-d4-sec2-t1
+큐 · 뮤텍스 함정 표다.
+- `xSemaphoreGive` 를 빠뜨리면(중간 return 등) 다른 태스크가 영원히 기다려 멈춘 것처럼 보인다.
+- 큐를 만들기 전에 태스크를 만들면 NULL 큐에 접근해 재부팅된다 → 큐 먼저, 태스크 나중.
+- 큐에 포인터(&local)를 넣으면 받는 쪽이 사라진 메모리를 읽는다 → 값을 넣는다.
+- 소비자가 생산자보다 느리면 큐가 가득 차 데이터가 손실된다 → 칸을 늘리거나 소비를 빠르게.
+- 두 뮤텍스를 서로 반대 순서로 잠그면 교착 상태(deadlock)가 된다 → 잠그는 순서를 항상 같게.
+
+@@ mcu-d4-sec3-t2
+ISR → 태스크 알림 · 소프트웨어 타이머 함정 표다.
+- ISR 에서 `vTaskNotifyGive`(FromISR 아님)를 쓰면 재부팅 · 이상 동작 → `vTaskNotifyGiveFromISR`.
+- `attachInterrupt` 를 태스크 생성보다 먼저 하면 버튼이 눌렸을 때 hWorker 가 NULL 이라 재부팅된다.
+- 타이머 콜백 안에서 vTaskDelay · delay 를 쓰면 다른 모든 소프트웨어 타이머가 멈춘다 (콜백은 타이머 태스크 하나에서 돈다).
+- ISR 에 `IRAM_ATTR` 가 없으면 Flash 작업 중 인터럽트가 올 때 크래시한다 (Day 1).
+
+@@ mcu-d4-sec2-2
+뮤텍스로 Serial 을 한 번에 한 태스크만 쓰게 한다.
+- `xSemaphoreCreateMutex()` 로 뮤텍스를 만든다.
+- `safe_print()` 는 `xSemaphoreTake(serialLock, portMAX_DELAY)` 로 잠근 뒤 여러 번의 print 로 한 줄을 쓰고 `xSemaphoreGive()` 로 반드시 풀어 준다. 다른 태스크는 Take 에서 기다린다.
+- taskPot(코어 1, 200 ms)과 taskDht(코어 0, 2초)가 서로 다른 코어에서 동시에 돈다. DHT 태스크는 float 출력 때문에 스택을 4096 으로 준다.
+뮤텍스가 없으면 "[POT] pot=[DHT] te2041mp=24.0" 처럼 줄이 섞인다. 뮤텍스는 화장실 열쇠와 같다. Day 1 의 portENTER_CRITICAL 은 인터럽트까지 막는 아주 짧은 구간용이고, 뮤텍스는 길어도 되는 구간용이다.
+
+@@ mcu-d4-sec2-3
+큐로 받은 값 10개의 평균을 내는 소비자 태스크를 완성한다.
+- 빈칸 ① `16`: 큐 칸 수 (주석의 16칸).
+- 빈칸 ② `&s`: 꺼낸 값을 복사해 넣을 변수의 주소.
+- 빈칸 ③ `0`: 10개 평균을 출력한 뒤 개수를 다시 0 으로.
+- 빈칸 ④ `0`: 대기 시간 0 이라 큐가 가득 차면 기다리지 않고 바로 실패한다.
+생산자는 50 ms 마다 보내고 소비자는 10개마다 평균을 출력한다.
+
+@@ mcu-d4-sec2-p2-2
+큐 · 뮤텍스 개념을 확인하는 괄호 넣기다.
+1. 큐에 넣으면 값이 복사된다 (참조가 아님). 그래서 보내는 쪽 지역 변수가 사라져도 안전하다.
+2. 올 때까지 잠들어 기다리게 하는 대기 시간 값은 `portMAX_DELAY`.
+3. 한 번에 한 태스크만 자원을 쓰게 하는 잠금은 뮤텍스(mutex).
+4. 서로 가진 잠금을 기다리며 멈추는 상태는 교착 상태(deadlock).
+
+@@ mcu-d4-pdf-p6-1
+슬라이드 p.6 의 뮤텍스 사용 순서다. `xSemaphoreCreateMutex()` 로 만들고, `xSemaphoreTake(lock, portMAX_DELAY)` 로 잠근 뒤 Serial 출력을 하고, `xSemaphoreGive(lock)` 로 반드시 짝으로 푼다. 슬라이드는 태스크 사이 데이터는 큐(값 복사), Serial · 파일 · 구조체 같은 공유 자원은 뮤텍스로 정리한다. 실수: Give 누락 → 영원히 대기, 큐에 &local → 사라진 메모리, M1→M2 / M2→M1 → 교착 상태, 느린 소비 → 큐 가득.
+
+@@ mcu-d4-sec2-inline
+2교시(큐 · 뮤텍스) 본문에 나온 코드 조각이다.
+- `queue_demo.ino`: 예제 2-1 큐 생산자 · 소비자 스케치.
+- `&s`: 큐에 넣고 꺼낼 구조체 변수의 주소. 그 내용이 복사된다.
+- `sizeof(sample_t)`: 큐 한 칸의 크기(바이트).
+- `xQueueReceive(…, portMAX_DELAY)`: 데이터가 없으면 잠들어 있다가 오면 깨어난다.
+- `mutex_demo.ino`: 예제 2-2 뮤텍스 스케치.
+- `print`: 한 줄을 여러 번의 print 로 쓰면 다른 태스크 출력과 섞일 수 있다.
+- `portENTER_CRITICAL`: Day 1 의 인터럽트까지 막는 짧은 임계 구역.
+- `xSemaphoreGive`: 뮤텍스 해제. Take 와 반드시 짝으로.
+- `return`: Take 뒤 중간에 return 하면 Give 가 빠져 다른 태스크가 영원히 기다린다.
+- `&local`: 지역 변수 주소. 큐에 포인터로 넣으면 사라진 메모리를 읽게 된다.
+
+@@ mcu-d4-sec3-1
+버튼 ISR 은 태스크에 알림만 보내고, 실제 일은 태스크가 한다 (지연 처리).
+- `onButton()` 은 `IRAM_ATTR` ISR 이다. 200 ms 안의 반복은 무시하는 간단한 디바운스를 한다.
+- `vTaskNotifyGiveFromISR(hWorker, &woken)` 로 worker 태스크를 깨우고, `portYIELD_FROM_ISR(woken)` 로 깨운 태스크가 더 급하면 ISR 이 끝나자마자 바로 전환한다.
+- taskWorker 는 `ulTaskNotifyTake(pdTRUE, portMAX_DELAY)` 로 알림이 올 때까지 잔다. 깨어나면 횟수를 출력하고 LED 를 3번 깜빡인다 (printf · vTaskDelay 같은 긴 일).
+- 태스크를 먼저 만들고 `attachInterrupt` 를 나중에 한다. 반대면 hWorker 가 NULL 일 때 알림이 가서 재부팅된다.
+ISR 안에서는 FromISR 이 붙은 함수만 쓴다.
+
+@@ mcu-d4-sec3-2
+FreeRTOS 소프트웨어 타이머로 태스크 없이 주기 작업을 한다.
+- `xTimerCreate("blink", pdMS_TO_TICKS(500), pdTRUE, NULL, onBlink)` 의 인자는 이름 · 주기 · 반복 여부 · ID · 콜백이다. pdTRUE 라 500 ms 마다 반복한다.
+- `xTimerStart(tBlink, 0)` 로 시작한다.
+- 콜백 `onBlink` 는 타이머 서비스 태스크에서 불려 GPIO26 LED 를 뒤집는다.
+- 시리얼로 'f' 를 보내면 `xTimerChangePeriod` 로 100 ms, 's' 면 1000 ms, 'x' 면 `xTimerStop` 으로 멈춘다.
+Day 3 하드웨어 타이머는 µs 단위지만 ISR 이라 제한이 많고, 소프트웨어 타이머는 ms 단위에 콜백이 태스크에서 불려 조금 더 자유롭다. 그래도 콜백을 오래 막으면 다른 타이머가 밀린다.
+
+@@ mcu-d4-sec3-3
+쌓인 알림 개수를 한 번에 받아 처리한다.
+- 빈칸 ① `FromISR`: ISR 안에서는 `vTaskNotifyGiveFromISR` 를 쓴다.
+- 빈칸 ② `woken`: 더 급한 태스크를 깨웠으면 ISR 이 끝날 때 전환한다.
+- 빈칸 ③ `pdTRUE`: 받은 뒤 카운트를 0 으로 만든다. 그래서 n 은 그동안 쌓인 횟수다 (pdFALSE 는 1 만 뺀다).
+
+@@ mcu-d4-sec3-t1
+타이머 · 태스크 선택표다.
+- µs 정밀도, 화면 갱신 → 하드웨어 타이머 (Day 3).
+- ms 단위 주기 작업, 깜빡임 → 소프트웨어 타이머.
+- 복잡한 일, 기다림이 있는 일 → 태스크 + vTaskDelay.
+
+@@ mcu-d4-sec3-p3-2
+ISR · 소프트웨어 타이머를 확인하는 괄호 넣기다.
+1. ISR 에서 쓸 수 있는 FreeRTOS 함수는 이름 끝에 `FromISR` 이 붙는다.
+2. ISR 은 알리기만 하고 일은 태스크가 하는 구조가 지연(deferred) 처리다.
+3. 소프트웨어 타이머 콜백은 ISR 이 아니라 타이머 서비스 태스크에서 불린다.
+4. `xTimerCreate` 의 세 번째 인자 pdTRUE 는 반복(자동 재장전, auto-reload) 타이머라는 뜻이다.
+
+@@ mcu-d4-pdf-p7-1
+슬라이드 p.7 의 지연 처리 요약이다. ISR `onButton()` 은 수 µs 동안 `vTaskNotifyGiveFromISR` 로 알림만 보내고 `portYIELD_FROM_ISR` 로 전환을 요청한다. taskWorker 는 `ulTaskNotifyTake(pdTRUE, portMAX_DELAY)` 로 자다가 깨어나 printf · LED · 파일 같은 긴 일을 한다. 슬라이드는 순서(태스크 생성 → attachInterrupt, 반대면 NULL 핸들 → 재부팅)와 타이머 콜백에서 delay 금지를 강조한다.
+
+@@ mcu-d4-sec3-inline
+3교시(ISR → 태스크 알림 · 소프트웨어 타이머) 본문에 나온 코드 조각이다.
+- `vTaskNotifyGiveFromISR`: ISR 에서 태스크에 알림을 보낸다.
+- `ulTaskNotifyTake`: 태스크가 알림을 기다렸다 받는다 (받은 개수를 돌려줌).
+- `volatile`: Day 1 에서 ISR 이 올리던 카운터에 붙였던 키워드. 그때는 loop 가 폴링했다.
+- `isr_notify.ino`: 예제 3-1 ISR → 태스크 알림 스케치.
+- `FromISR`: ISR 에서 써도 되는 FreeRTOS 함수 이름 끝에 붙는 말.
+- `Serial.printf`: ISR 이 아닌 태스크에서 할 일.
+- `vTaskDelay`: 태스크에서만 쓴다.
+- `delay`: ISR · 타이머 콜백에서 쓰면 안 된다.
+- `soft_timer.ino`: 예제 3-2 소프트웨어 타이머 스케치.
+- `vTaskNotifyGive`: 태스크용 알림 함수. ISR 에서 쓰면 재부팅 · 이상 동작.
+- `attachInterrupt`: 태스크를 만든 뒤에 등록한다.
+- `IRAM_ATTR`: ISR 을 RAM 에 둔다. 없으면 Flash 작업 중 크래시.
+- `pdTRUE`: ulTaskNotifyTake 에서 "받은 뒤 0 으로", xTimerCreate 에서 "반복".
+- `pdFALSE`: ulTaskNotifyTake 에서 "1 만 빼기". woken 의 초기값이기도 하다.
+- `xTimerCreate`: 소프트웨어 타이머를 만든다.
+
+@@ mcu-d4-sec4-3
+LittleFS 파일의 줄 수를 센다.
+- 빈칸 ① `FILE_READ`: 읽기 모드로 연다. 열기에 실패하면 f 가 거짓이라 -1 을 돌려준다.
+- 빈칸 ② `available`: 읽을 바이트가 남아 있는 동안 반복한다.
+- 빈칸 ③ `close`: 다 읽으면 반드시 닫는다.
+한 바이트씩 `f.read()` 해서 '\n' 을 만날 때마다 줄 수를 1 늘린다.
+
+@@ mcu-d4-sec4-1
+LittleFS 로 Flash 에 파일을 쓰고, 읽고, 목록을 본다.
+- `LittleFS.begin(true)` 로 마운트한다. true 는 처음(포맷 안 됨)이면 포맷하라는 뜻이다. 실패하면 메시지를 내고 끝낸다.
+- `LittleFS.open("/hello.txt", FILE_WRITE)` 는 새로 쓰기("w")라 기존 내용을 지운다. `f.println` · `f.printf` 로 쓰고 `f.close()` 해야 Flash 에 확실히 기록된다.
+- `FILE_READ` 로 다시 열고 `while (f.available()) Serial.write(f.read())` 로 한 바이트씩 출력한다.
+- `list_files()` 는 루트 "/" 를 열어 `openNextFile()` 로 파일을 하나씩 돌며 이름과 크기를 찍고, `usedBytes()` / `totalBytes()` 로 사용량을 보여 준다.
+C 과정 Day 4 의 fopen · fprintf · fclose 와 같은 흐름이다. 처음 실행하면 포맷 때문에 몇 초 걸린다.
+
+@@ mcu-d4-sec4-2
+5초마다 온도 · 가변저항 값을 CSV 파일에 이어 쓰는 로거다. 전원을 꺼도 남는다.
+- `log_append()` 는 파일이 없을 때(`!LittleFS.exists(LOG)`)만 머리줄 "ms,temp,pot" 을 쓰고, `FILE_APPEND` 로 끝에 한 줄을 이어 쓴 뒤 닫는다. 열기 실패면 false.
+- `dump_log()` 는 파일 전체를 시리얼로 출력한다.
+- loop 는 `millis() - last >= 5000` 으로 5초마다 기록하고, DHT 값이 NaN 이면 건너뛴다.
+- 시리얼 'd' 는 로그 보기, 'x' 는 `LittleFS.remove(LOG)` 로 지우기.
+USB 를 뽑았다 꽂아도 이전 로그가 남는다. 다만 ms 는 재부팅 후 다시 작은 값부터 시작해서, 5교시에서 실제 시각으로 바꾼다.
+
+@@ mcu-d4-sec4-t1
+LittleFS 파일 열기 모드표다.
+- "r" = `FILE_READ`: 읽기.
+- "w" = `FILE_WRITE`: 새로 쓰기. 기존 내용을 지운다.
+- "a" = `FILE_APPEND`: 끝에 이어 쓰기. 로그용이다.
+
+@@ mcu-d4-sec4-t2
+LittleFS 함정 표다.
+- Partition Scheme 이 No FS 면 마운트 실패 → Default 4MB with spiffs.
+- 로그에 `FILE_WRITE` 를 쓰면 매번 이전 로그가 지워진다 → `FILE_APPEND`.
+- `close()` 없이 쓰거나 열린 채 전원을 끄면 마지막 부분이 기록되지 않을 수 있다.
+- 100 ms 마다 영원히 쓰면 Flash 블록 쓰기 수명(약 10만 번)과 용량(1.5MB)이 금방 찬다 → 모아서 쓰거나 주기를 늘린다.
+- 파일 이름 앞 / 를 빠뜨리면 open 실패 → 항상 "/log.csv".
+- 새 스케치를 업로드해도 파일은 남는다 (앱 영역만 다시 씀). 지우려면 `LittleFS.format()`.
+
+@@ mcu-d4-sec4-p4-2
+LittleFS 사용법을 확인하는 괄호 넣기다.
+1. 쓰기 전에 `LittleFS.begin(true)` 로 마운트한다.
+2. 로그처럼 끝에 이어 쓰려면 `FILE_APPEND`("a") 로 연다.
+3. 쓴 내용을 Flash 에 확실히 기록하려면 `close()` 한다.
+4. 새 스케치를 업로드해도 LittleFS 의 파일은 남는다.
+
+@@ mcu-d4-pdf-p8-1
+슬라이드 p.8 의 LittleFS 요약이다. Flash 4MB 중 약 1.5MB 가 파일 영역이다. `LittleFS.begin(true)` 로 마운트(처음이면 포맷) → `open("/log.csv", FILE_APPEND)` 로 열고 실패를 검사 → `f.printf` 로 한 줄 → `f.close()` 로 확실히 기록 → `FILE_READ` 로 다시 열어 `available()` · `read()` 로 출력하는 흐름이다. 함정: No FS 는 마운트 실패, close 없이 전원을 끄면 마지막 줄 유실, 100 ms 마다 영원히 쓰면 수명 · 용량 문제, 경로에 / 빠지면 open 실패, 새 스케치 업로드에도 파일은 남는다.
+
+@@ mcu-d4-sec4-inline
+4교시(LittleFS) 본문에 나온 코드 조각이다.
+- `fs_basic.ino`: 예제 4-1 파일 쓰기 · 읽기 · 목록 스케치.
+- `"r"`: 읽기 모드 문자열.
+- `FILE_READ`: 읽기 모드 매크로.
+- `"w"`: 새로 쓰기 모드 문자열 (기존 내용 삭제).
+- `FILE_WRITE`: 새로 쓰기 모드 매크로.
+- `"a"`: 이어 쓰기 모드 문자열.
+- `FILE_APPEND`: 이어 쓰기 모드 매크로. 로그에 쓴다.
+- `fopen`: C 표준 파일 열기. LittleFS.open 과 같은 역할.
+- `fprintf`: C 표준 파일 서식 출력. f.printf 와 같은 역할.
+- `fclose`: C 표준 파일 닫기. f.close 와 같은 역할.
+- `csv_logger.ino`: 예제 4-2 CSV 로거 스케치.
+- `ms`: 로그 첫 열. 부팅 후 millis() 값이라 재부팅하면 다시 작아진다.
+- `No FS`: 파일 영역이 없는 Partition Scheme. LittleFS 마운트 실패 원인.
+- `LittleFS 마운트 실패`: begin 이 false 일 때 출력하는 메시지.
+- `close()`: 파일 닫기. 빠뜨리면 마지막 부분이 기록되지 않을 수 있다.
+- `open`: 파일 열기. 경로에 / 가 빠지면 실패한다.
+- `"/log.csv"`: 로그 파일 경로. 항상 / 로 시작한다.
+- `LittleFS.format()`: 파일 영역 전체를 지운다.
+- `LittleFS.____(true)`: 괄호 넣기 1번. 답은 `begin`.
+
+@@ mcu-d4-sec5-1
+주변 Wi-Fi 를 스캔하고 타임아웃을 두고 공유기에 연결한다.
+- `WiFi.scanNetworks()` 가 찾은 개수를 돌려주고, `WiFi.SSID(i)` · `WiFi.RSSI(i)` · `WiFi.channel(i)` 로 각 망을 출력한다.
+- `wifi_connect()` 는 `WiFi.mode(WIFI_STA)`(공유기에 붙는 스테이션) → `WiFi.begin(SSID, PASS)` 후 `WiFi.status()` 가 `WL_CONNECTED` 가 될 때까지 250 ms 마다 기다린다. timeout_ms 를 넘으면 false 를 돌려준다. 타임아웃이 없으면 비밀번호가 틀렸을 때 영원히 점만 찍는다.
+- 연결되면 `WiFi.localIP()` 와 RSSI 를 출력하고 `WiFi.setAutoReconnect(true)` 로 끊기면 알아서 다시 붙게 한다.
+- loop 는 `WiFi.status()` 가 바뀔 때만 이전 → 새 상태를 출력한다. Day 1 8교시처럼 상태 값이다.
+
+@@ mcu-d4-sec5-2
+NTP 서버에서 실제 시각을 받아 출력한다.
+- 먼저 Wi-Fi 에 연결한다 (15초까지 기다림).
+- `configTime(9 * 3600, 0, "pool.ntp.org", "time.google.com")` 은 한국 UTC+9(초 단위 오프셋), 서머타임 0, NTP 서버 두 개를 설정한다.
+- `getLocalTime(&t, 10000)` 으로 `struct tm` 에 시각을 받는다. 최대 10초 기다린다.
+- `strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &t)` 로 "2025-03-14 10:23:05" 같은 문자열을 만든다.
+- loop 는 1초마다 "%H:%M:%S" 를 출력한다.
+한 번 받으면 ESP32 가 스스로 시계를 유지한다. 로그의 millis() 대신 쓰면 재부팅해도 이어지는 시각이 남는다. NTP 는 인터넷이 필요하다 (핫스팟은 되고 AP 모드는 안 됨).
+
+@@ mcu-d4-sec5-3
+AP 모드: 공유기 없이 ESP32 가 직접 Wi-Fi 망을 만든다.
+- `ESP.getEfuseMac() >> 32` 로 칩 고유 MAC 의 위쪽 16비트를 얻어 "ESP32-%04X" 이름을 만든다. 보드마다 이름이 달라 교실에서 겹치지 않는다.
+- `WiFi.mode(WIFI_AP)` 후 `WiFi.softAP(name, "12345678")` 로 망을 연다. 비밀번호는 8자 이상이어야 한다.
+- `WiFi.softAPIP()` 는 ESP32 주소로 기본 192.168.4.1 이다.
+- loop 는 3초마다 `WiFi.softAPgetStationNum()` 으로 접속한 기기 수를 출력한다.
+스마트폰에서 ESP32-XXXX 에 접속하면 6교시 웹 페이지를 공유기 없이 볼 수 있다 (인터넷은 안 됨).
+
+@@ mcu-d4-sec5-4
+타임아웃이 있는 Wi-Fi 연결 함수를 완성한다.
+- 빈칸 ① `WIFI_STA`: 공유기에 붙는 스테이션 모드.
+- 빈칸 ② `WL_CONNECTED`: 연결 완료 상태가 될 때까지 기다린다.
+- 빈칸 ③ `timeout_ms`: 시작 뒤 이 시간을 넘으면 실패.
+- 빈칸 ④ `true`: while 을 빠져나왔으면 연결된 것이다.
+시간 비교는 `millis() - t0 > timeout_ms` 뺄셈 방식이라 넘침에도 안전하다.
+
+@@ mcu-d4-sec5-t1
+Wi-Fi 신호 세기(RSSI) 기준표다. 단위 dBm 은 음수이고 0 에 가까울수록 강하다.
+- -30 ~ -60 dBm: 좋음.
+- -60 ~ -75 dBm: 보통. 웹 페이지는 된다.
+- -80 dBm 이하: 나쁨. 끊기므로 안테나를 확인한다.
+
+@@ mcu-d4-sec5-t2
+Wi-Fi 함정 표다.
+- 안테나 없이 연결하면(ESP-32U) RSSI -85 dBm 이하로 실패 · 끊김.
+- 5GHz 전용 공유기는 스캔에 안 보인다 → 2.4GHz.
+- 연결 대기 while 에 타임아웃이 없으면 비밀번호가 틀릴 때 영원히 멈춘다.
+- Wi-Fi 를 켜면 ADC2 핀(25 · 26 · 27 …)의 analogRead 가 실패한다 (Day 2 1교시) → 아날로그는 34(ADC1).
+- SSID · 비밀번호를 코드에 넣고 GitHub 에 올리면 유출된다 → secrets.h 로 빼고 올리지 않는다.
+- softAP 비밀번호가 7자 이하면 AP 가 만들어지지 않는다.
+
+@@ mcu-d4-sec5-p5-2
+Wi-Fi 기본을 확인하는 괄호 넣기다.
+1. ESP-32U 는 기판 안테나가 없어 U.FL 커넥터에 외부 안테나를 단다.
+2. ESP32 Wi-Fi 는 2.4GHz 대역만 지원한다.
+3. RSSI 는 0 에 가까울수록 좋다 (-100 쪽이 나쁨).
+4. ESP32 가 직접 망을 만드는 모드가 AP(softAP) 모드이고 기본 주소는 192.168.4.1 이다.
+
+@@ mcu-d4-pdf-p10-1
+슬라이드 p.10 의 Wi-Fi 연결 요약이다. `wifi_connect(timeout_ms)` 는 STA 모드로 begin 한 뒤 `WL_CONNECTED` 가 될 때까지 기다리되 타임아웃을 넘으면 false 다. 연결 뒤 `WiFi.localIP()`, `WiFi.RSSI()`, `WiFi.setAutoReconnect(true)` 를 쓴다. 슬라이드의 증상표: 스캔에 안 보임 → 5GHz, 점만 계속 → 비밀번호 · 타임아웃 없음, 자주 끊김 → 안테나 · 거리, ADC 값 안 나옴 → ADC2 핀. 아이디 로그인형(WPA2-Enterprise) 망은 안 되므로 스마트폰 핫스팟(2.4GHz)을 쓴다. SSID · 비밀번호는 secrets.h 로 분리한다.
+
+@@ mcu-d4-pdf-p11-1
+슬라이드 p.11 의 NTP 부분이다. `configTime(9 * 3600, 0, "pool.ntp.org")` 로 UTC+9 를 설정하고, `getLocalTime(&t, 10000)` 으로 최대 10초 기다려 시각을 받은 뒤 `strftime` 으로 "%Y-%m-%d %H:%M:%S" 문자열을 만든다. NTP 는 인터넷이 필요하고, 한 번 받으면 ESP32 가 스스로 시계를 유지하므로 로그의 millis() 대신 쓴다.
+
+@@ mcu-d4-pdf-p11-2
+슬라이드 p.11 의 AP 모드 부분이다. `WiFi.mode(WIFI_AP)` 후 `WiFi.softAP("ESP32-7C9E", "12345678")` 로 망을 만든다 (비밀번호 8자 이상). `WiFi.softAPIP()` 는 192.168.4.1 이다. 스마트폰 Wi-Fi 에서 ESP32-XXXX 에 접속해 http://192.168.4.1 로 들어간다. 인터넷 없이 스마트폰과 직접 연결되며, 종합 과제에서는 공유기 연결 실패 시 AP 모드로 자동 전환한다.
+
+@@ mcu-d4-sec5-inline
+5교시(Wi-Fi · 시간 · AP) 본문에 나온 코드 조각이다.
+- `wifi_connect.ino`: 예제 5-1 스캔 · 연결 스케치.
+- `while`: 연결 대기 반복. 타임아웃이 없으면 비밀번호가 틀릴 때 영원히 돈다.
+- `WiFi.status()`: 연결 상태 값 (WL_CONNECTED 등). 바뀔 때만 반응한다.
+- `ntp_time.ino`: 예제 5-2 NTP 시각 스케치.
+- `millis()`: 4교시 로그에 쓰던 부팅 후 ms. 재부팅하면 처음부터.
+- `strftime`: `struct tm` 을 "%Y-%m-%d %H:%M:%S" 같은 문자열로 만든다.
+- `wifi_ap.ino`: 예제 5-3 AP 모드 스케치.
+- `ESP32-XXXX`: AP 모드에서 보이는 망 이름 (보드마다 다른 4자리 16진수).
+- `secrets.h`: SSID · 비밀번호를 따로 넣어 두는 헤더. GitHub 에 올리지 않는다.
+
+@@ mcu-d4-sec6-1
+WebServer 로 센서 값을 웹 페이지와 JSON 으로 보여 준다.
+- `WebServer server(80)` 는 HTTP 기본 포트 80 서버다.
+- `handleRoot()` 는 `snprintf` 로 온도 · 가변저항 값이 든 HTML 을 만들어 `server.send(200, "text/html", html)` 로 보낸다. `<meta charset='utf-8'>` 이 있어야 한국어가 안 깨지고, viewport meta 는 스마트폰 화면 폭에 맞춘다.
+- `handleApi()` 는 `{"temp":24.0,"pot":2041,"ms":…}` 같은 JSON 을 `application/json` 으로 보낸다. 사람이 아닌 프로그램이 읽기 좋은 형식이다.
+- `handleNotFound()` 는 없는 경로에 404 를 보낸다.
+- `server.on("/", handleRoot)` 는 경로 → 함수 포인터 표를 만든다 (Day 2 8교시 센서 표와 같은 생각).
+- loop 는 `server.handleClient()` 로 요청이 왔는지 확인하고 처리한다.
+스마트폰을 같은 Wi-Fi 에 연결하고 시리얼에 찍힌 주소를 브라우저에 입력한다.
+
+@@ mcu-d4-sec6-2
+웹 페이지 버튼으로 LED 를 켜고, 가변저항 값을 새로고침 없이 1초마다 갱신한다.
+- `PAGE[]` 는 `R"HTML( … )HTML"` 원시 문자열이라 따옴표를 이스케이프하지 않고 HTML 을 그대로 쓴다. `PROGMEM` 은 Flash 에 두라는 표시다.
+- 페이지의 JavaScript `led(pin, on)` 은 `fetch('/led?pin=25&on=1')` 로 요청만 보낸다. `setInterval` 이 1초마다 `/api` 를 불러 JSON 의 pot 값만 바꾼다.
+- `handleLed()` 는 `server.hasArg()` 로 인자가 있는지 확인하고 없으면 400, `server.arg("pin").toInt()` 로 꺼낸 핀이 25 · 26 이 아니면 403 을 보낸다. 허용 목록으로 검사해 아무 핀이나 조작하지 못하게 한다.
+- 검사를 통과하면 `digitalWrite` 후 200 "OK".
+`/led?pin=25&on=1` 의 ? 뒤가 쿼리 인자다.
+
+@@ mcu-d4-sec6-3
+`/led?pin=25&on=1` 을 처리하는 핸들러를 완성한다.
+- 빈칸 ① `hasArg`: 쿼리 인자 pin 이 있는지 확인한다.
+- 빈칸 ② `400`: 인자가 없으면 잘못된 요청.
+- 빈칸 ③ `toInt`: 문자열 인자를 정수로 바꾼다.
+- 빈칸 ④ `200`: 성공.
+HTTP 상태 코드: 200 성공 · 400 잘못된 요청 · 403 금지 · 404 없음 · 500 서버 오류.
+
+@@ mcu-d4-sec6-t1
+웹 서버 함정 표다.
+- loop 에 `delay(1000)` 을 넣으면 요청 처리가 1초씩 밀린다 → handleClient 를 자주 부른다.
+- 핸들러 안에서 오래 걸리는 일(DHT 여러 번, 큰 파일)을 하면 다른 요청이 기다린다 → 값은 태스크가 미리 읽어 두고 핸들러는 보내기만 (8교시).
+- 스마트폰이 LTE · 다른 Wi-Fi 면 접속이 안 된다 → 같은 망.
+- pin 인자를 검사 없이 digitalWrite 하면 누구나 아무 핀이나 조작한다 → 허용 목록.
+- `char html[128]` 에 긴 페이지를 넣으면 snprintf 가 잘라 중간에 끊긴다 → 크기 확인.
+- 한국어가 깨지면 `<meta charset="utf-8">` 누락이다.
+
+@@ mcu-d4-sec6-p6-2
+웹 서버를 확인하는 괄호 넣기다.
+1. 경로와 처리 함수를 잇는 호출은 `server.on("/api", handleApi)`.
+2. loop 에서 `server.handleClient()` 를 자주 불러 요청을 처리한다.
+3. `/led?pin=25` 의 ? 뒤 pin=25 는 쿼리(query) 인자다.
+4. 없는 경로에는 404 를 돌려준다.
+
+@@ mcu-d4-pdf-p12-1
+슬라이드 p.12 의 경로 → 함수 표와 `handleLed` 다. "/" → handleRoot, "/api" → handleApi(200 application/json), "/led" → handleLed, 없는 경로 → handleNotFound(404). `handleLed` 는 인자가 없으면 400, 허용 목록(25 · 26)에 없는 핀이면 403, 통과하면 `digitalWrite` 후 200 "OK" 를 보낸다. `server.on` 은 Day 2 센서 표처럼 함수 포인터 표를 만드는 것이다.
+
+@@ mcu-d4-pdf-p13-1
+슬라이드 p.13 의 새로고침 없는 페이지다. 페이지는 한 번만 받고, 값은 1초마다 `/api` 로 받는다. `R"HTML( … )HTML"` 원시 문자열에 HTML 을 그대로 넣고, 버튼은 `fetch('/led?pin=…&on=…')`, `setInterval` 안에서 `await (await fetch('/api')).json()` 으로 JSON 을 받아 `id="pot"` 요소의 글자만 바꾼다. 슬라이드는 외부 입력(쿼리 인자)은 누구나 URL 로 넣을 수 있으니 항상 검사하라고 강조한다.
+
+@@ mcu-d4-sec6-inline
+6교시(웹 서버) 본문에 나온 코드 조각이다.
+- `WebServer`: ESP32 코어에 든 HTTP 서버 라이브러리.
+- `web_sensor.ino`: 예제 6-1 센서 값 웹 페이지 스케치.
+- `server.on("/", handleRoot)`: 경로 "/" 요청을 handleRoot 함수에 연결한다.
+- `web_control.ino`: 예제 6-2 웹 LED 제어 스케치.
+- `R"HTML( … )HTML"`: C++ 원시 문자열. 따옴표 이스케이프 없이 HTML 을 그대로 쓴다.
+- `/api`: 값만 JSON 으로 돌려주는 경로.
+- `/led?pin=25&on=1`: LED 제어 요청 주소. ? 뒤가 쿼리 인자.
+- `server.arg("pin")`: 쿼리 인자 pin 의 값(문자열)을 꺼낸다.
+- `delay(1000)`: loop 에 넣으면 요청 처리가 1초씩 밀린다.
+- `handleClient`: 들어온 요청을 확인하고 처리하는 함수. loop 에서 자주 부른다.
+- `pin`: 쿼리 인자 이름. 검사 없이 쓰면 위험하다.
+- `digitalWrite`: 허용 목록 검사를 통과한 핀에만 쓴다.
+- `char html[128]`: 긴 페이지를 담기엔 작은 버퍼. 잘린다.
+- `snprintf`: 버퍼 크기를 넘으면 잘라 준다.
+- `<meta charset="utf-8">`: 빠지면 한국어가 깨진다.
+- `server.____("/api", handleApi)`: 괄호 넣기 1번. 답은 `on`.
+- `server.____()`: 괄호 넣기 2번. 답은 `handleClient`.
+- `/led?pin=25`: 괄호 넣기 3번의 예시 주소.
+- `pin=25`: ? 뒤의 쿼리 인자.
+
+@@ mcu-d4-sec7-1
+로그 매크로로 "언제, 어디서" 나온 로그인지 함께 찍는다.
+- `LOG_LEVEL` 보다 높은 레벨의 로그는 출력하지 않는다 (0 끔 · 1 오류 · 2 경고 · 3 정보 · 4 상세).
+- `LOG(lv, tag, fmt, ...)` 는 `[millis][태그][파일:줄] 메시지` 형식으로 출력한다. `__FILE__` · `__LINE__` 은 전처리기가 채우는 파일 이름과 줄 번호다.
+- `##__VA_ARGS__` 는 가변 인자가 없을 때 앞 쉼표를 지운다.
+- `do { … } while (0)` 은 매크로를 if 안에서 써도 안전하게 만드는 관용구다.
+- `LOGE` · `LOGW` · `LOGI` · `LOGD` 는 레벨별 줄임 매크로다. LOG_LEVEL 3 이면 LOGD 는 출력되지 않는다.
+ESP32 코어에도 log_e · log_w · log_i 가 있고 도구 → Core Debug Level 로 켠다.
+
+@@ mcu-d4-sec7-2
+일부러 NULL 포인터에 써서 크래시를 내고, 재부팅 원인을 읽는다.
+- `esp_reset_reason()` 은 지난 재부팅 원인을 돌려준다. `reason_str()` 이 switch 로 전원 켜짐 · 소프트웨어 재시작 · 크래시(패닉) · 인터럽트/태스크 워치독 · 전압 강하(Brownout) 를 한국어로 바꾼다.
+- `find_box()` 는 못 찾으면 NULL 을 돌려주는 함수를 흉내 낸다.
+- 버튼을 누르면 `b->value = 42` 로 NULL 검사 없이 쓰고, "Guru Meditation Error: Core 1 panic'ed (StoreProhibited)" 로 재부팅된다. 다시 켜지면 원인이 "크래시(패닉)" 로 나온다.
+Backtrace 의 주소는 `xtensa-esp32-elf-addr2line -pfiaC -e …elf 주소…` 로 소스 줄(예: loop() at crash_demo.ino:32)로 바꿀 수 있다.
+
+@@ mcu-d4-sec8-t1
+4일 과정 정리표다.
+- Day 1: 핀은 레지스터의 비트, 입력은 풀업 · 디바운스 · 인터럽트, 상태는 enum → 버튼 ISR · LED · 경보 상태.
+- Day 2: 전압은 ADC 로, 흔들림은 필터로, 센서는 구조체 표로 → DHT11 · 가변저항 · reading_t.
+- Day 3: 모양은 비트맵, 통신은 주소, 큰 부하는 드라이버로 → (확장) LCD 표시.
+- Day 4: 일은 태스크로 나누고, 큐로 넘기고, 뮤텍스로 지키고, 파일 · 웹으로 남긴다 → 종합 프로젝트 전체 구조.
+
+@@ mcu-d4-sec7-3
+예제 7-2 에서 버튼을 눌렀을 때 나오는 크래시 메시지 예시다.
+- `Guru Meditation Error: Core 1 panic'ed (StoreProhibited)` 는 코어 1 에서 쓰면 안 되는 주소에 써서 패닉이 났다는 뜻이다.
+- `PC` 는 크래시 순간 실행하던 명령 주소다.
+- `EXCVADDR: 0x00000000` 은 문제의 주소가 0, 즉 NULL 포인터라는 증거다.
+- `Backtrace` 는 호출 경로 주소들(가장 안쪽이 먼저)이다. addr2line 으로 소스 줄로 바꾼다.
+- 재부팅 뒤 `esp_reset_reason()` 이 "크래시(패닉)" 을 알려 준다.
+
+@@ mcu-d4-sec7-4
+감시(health) 태스크가 5초마다 힙과 다른 태스크의 스택 여유를 출력한다.
+- taskA 는 스택 2048 에 `char big[1500]` 지역 배열을 써서 스택이 빠듯하다.
+- taskHealth 는 `ESP.getFreeHeap()` 의 현재값과 지금까지 최저값, `uxTaskGetStackHighWaterMark(hA)` 를 찍는다.
+힙이 시간이 지나며 계속 줄면 메모리 누수(malloc 후 free 누락, 반복되는 String 연결)다. 스택 여유가 수백 바이트 이하면 곧 Stack canary 크래시가 난다. 배열을 3000 으로 바꾸면 직접 확인할 수 있다.
+
+@@ mcu-d4-sec7-5
+예제 7-2 의 크래시를 NULL 검사로 고친다.
+- 빈칸 ① `NULL`: find_box 가 못 찾으면 NULL 을 돌려주므로 받자마자 검사하고, `LOGE` 로 오류 로그를 남긴 뒤 return 한다.
+- 빈칸 ② `value`: NULL 이 아닐 때만 멤버에 쓴다.
+"못 찾으면 NULL" 을 돌려주는 함수(strchr, fopen, malloc, LittleFS.open)는 받자마자 검사한다.
+
+@@ mcu-d4-sec7-t1
+크래시 메시지 읽는 법 표다.
+- `StoreProhibited`: 쓰면 안 되는 주소에 씀 (`LoadProhibited` 는 읽기). 대부분 NULL · 잘못된 포인터다.
+- `EXCVADDR: 0x00000000`: 문제의 주소. 0 근처면 NULL 포인터이고, 0x00000004 면 NULL 구조체의 4바이트 위치 멤버다.
+- `PC`: 크래시 순간 실행 중이던 명령 주소.
+- `Backtrace`: 호출 경로(가장 안쪽 먼저). 주소를 소스 줄로 바꾸면 어느 함수 몇 번째 줄인지 나온다.
+
+@@ mcu-d4-sec7-t2
+크래시 메시지별 흔한 원인표다.
+- StoreProhibited · LoadProhibited: NULL · 해제된 · 초기화 안 된 포인터.
+- Stack canary watchpoint triggered (태스크 이름): 그 태스크 스택 부족 → 스택을 늘리거나 큰 지역 배열을 static 으로.
+- Task watchdog got triggered: 태스크가 오래 쉬지 않음 → vTaskDelay 누락.
+- IllegalInstruction: 잘못된 함수 포인터 호출, 스택 손상.
+- Brownout detector was triggered: 전압 강하 → 모터 · 서보 전원 (Day 3).
+
+@@ mcu-d4-sec7-t3
+증상별로 먼저 볼 것을 정리한 디버깅 순서표다.
+- 업로드 안 됨 → 포트 · 케이블 · Boot 버튼. 시리얼 글자 깨짐 → 보드레이트 115200.
+- 부품 반응 없음 → 배선 · 핀 번호 · 전원 레일 · pinMode. 값이 이상함 → 전압 · 분압 · ADC1 · 센서 예열.
+- I2C 장치 없음 → 스캐너 · SDA/SCL · 주소. LCD 글자 안 보임 → V0 대비 · RW → GND · VDD 5V.
+- 가끔 재부팅 → `esp_reset_reason()` (패닉이면 크래시 메시지, 전압 강하면 전원).
+- 서서히 느려지다 멈춤 → 힙 감시(메모리 누수). 멈춘 것처럼 보임 → 뮤텍스 반환 누락 · 무한 대기 · 타임아웃 없는 while.
+한 번에 하나만 바꾸고 결과를 기록하며, "잘 되던 마지막 상태" 로 돌아가 조금씩 더하는 것이 가장 빠르다.
+
+@@ mcu-d4-sec7-p7-2
+크래시 해독을 확인하는 괄호 넣기다.
+1. StoreProhibited + EXCVADDR 0x00000000 은 NULL 포인터에 쓴 것이다.
+2. 호출 경로를 주소로 보여 주는 줄은 Backtrace.
+3. 재부팅 원인은 `esp_reset_reason()` 으로 알 수 있다.
+4. Stack canary watchpoint triggered 는 그 태스크의 스택이 부족하다는 뜻이다.
+
+@@ mcu-d4-pdf-p14-1
+슬라이드 p.14 의 로그 매크로 요약이다. `LOG_LEVEL` 이하 레벨만 `[millis][태그][파일:줄] 메시지` 로 출력한다. `__FILE__` · `__LINE__` 은 전처리기가 채우고, `##__VA_ARGS__` 는 인자가 없으면 앞 쉼표를 지우며, `do { } while (0)` 은 if 안에서도 안전하게 한다. 출력 예: `[   512][I][debug_log.ino:14] 부팅 완료, 힙 291340`. 코어의 log_e · log_i 는 Core Debug Level 로 켠다.
+
+@@ mcu-d4-sec7-inline
+7교시(디버깅) 본문에 나온 코드 조각이다.
+- `esp_reset_reason()`: 지난 재부팅 원인을 돌려주는 함수.
+- `debug_log.ino`: 예제 7-1 로그 매크로 스케치.
+- `__FILE__`: 전처리기가 채우는 현재 파일 이름.
+- `__LINE__`: 전처리기가 채우는 현재 줄 번호.
+- `##__VA_ARGS__`: 가변 인자. 없으면 앞 쉼표를 지운다.
+- `do { … } while (0)`: 여러 문장 매크로를 한 문장처럼 쓰게 하는 관용구.
+- `if`: 매크로를 if 안에서 써도 do-while 덕분에 안전하다.
+- `log_e`: ESP32 코어의 오류 로그 매크로.
+- `log_w`: 코어의 경고 로그 매크로.
+- `log_i`: 코어의 정보 로그 매크로.
+- `crash_demo.ino`: 예제 7-2 일부러 크래시 스케치.
+- `StoreProhibited`: 금지된 주소에 쓰기 예외.
+- `LoadProhibited`: 금지된 주소에서 읽기 예외.
+- `EXCVADDR: 0x00000000`: 문제 주소가 0 → NULL 포인터.
+- `PC`: 크래시 순간의 명령 주소.
+- `Backtrace`: 호출 경로 주소 목록.
+- `xtensa-esp32-elf-addr2line -pfiaC -e build/…/crash_demo.ino.elf 0x400d1a28 0x400d2f49`: Backtrace 주소를 함수 · 소스 줄로 바꾸는 명령.
+- `loop() at crash_demo.ino:32`: addr2line 결과 예. loop 함수 32번째 줄이다.
+- `packages/esp32/tools/`: Arduino15 폴더 안 addr2line 도구 위치.
+- `Stack canary watchpoint triggered (태스크 이름)`: 그 태스크 스택 넘침.
+- `Task watchdog got triggered`: 태스크가 오래 쉬지 않아 워치독이 걸림.
+- `vTaskDelay`: 빠지면 태스크 워치독이 걸린다.
+- `IllegalInstruction`: 잘못된 함수 포인터 · 스택 손상으로 생기는 예외.
+- `Brownout detector was triggered`: 전압 강하 리셋.
+- `health.ino`: 예제 7-3 감시 태스크 스케치.
+- `heap`: 남은 힙. 계속 줄면 누수다.
+- `taskA`: 스택을 많이 쓰는 감시 대상 태스크.
+- `Stack canary`: 스택 끝에 둔 표식. 덮이면 크래시로 알린다.
+- `strchr`: 못 찾으면 NULL 을 돌려주는 C 함수.
+- `fopen`: 열기 실패 시 NULL 을 돌려주는 C 함수.
+- `malloc`: 할당 실패 시 NULL. free 를 빠뜨리면 누수.
+- `LittleFS.open`: 열기 실패 시 거짓(빈 File)을 돌려준다.
+- `Stack canary watchpoint triggered`: 스택 부족 크래시 메시지.
+
+@@ mcu-d4-sec8-1
+Day 4 종합 과제 "IoT 환경 모니터" 의 구조도다.
+- taskSensor 가 2초마다 DHT11 · 가변저항을 읽어 `reading_t` 로 큐(8칸)에 보낸다.
+- taskLogger 가 큐에서 받아 LittleFS `/log.csv` 에 이어 쓰고, 뮤텍스로 보호한 `latest` 를 갱신하고, 30°C 이상이면 빨강 LED 를 켠다 (히스테리시스 30 / 29).
+- loop 는 WebServer 를 돌린다: `/` 자동 갱신 페이지, `/api` latest 를 JSON 으로, `/log.csv` 로그 다운로드, `/clear` 로그 삭제.
+- 버튼 ISR 이 알림을 보내면 taskButton 이 초록 LED 를 토글하고 로그에 "BUTTON" 줄을 남긴다.
+Day 1~4 의 태스크 · 큐 · 뮤텍스 · ISR 알림 · 파일 · 웹을 한 프로그램에 모은다.
+
+@@ mcu-d4-sec8-2
+종합 과제 8-A "IoT 환경 모니터" 문제 코드다. TODO 5개를 채운다.
+- `reading_t` 는 온도 · 가변저항 · 측정 시각을 묶은 구조체다. `latest` 는 최신 값이고 `lock` 뮤텍스로 latest 와 파일 접근을 보호한다.
+- TODO 1 (taskSensor): r 을 채워 `xQueueSend(q, &r, 0)` 으로 보낸다. 2초 주기.
+- TODO 2 (taskLogger): 큐에서 받은 값(NaN 이면 건너뜀)으로 뮤텍스를 잡고 latest 갱신 + `/log.csv` 에 이어 쓰기 후 해제.
+- TODO 3: 30 이상 ON, 29 미만 OFF 히스테리시스 경보로 빨강 LED.
+- 버튼은 ISR 이 `vTaskNotifyGiveFromISR` 로 taskButton 을 깨우고, 태스크가 50 ms 뒤 다시 읽어 디바운스한 다음 초록 LED 를 토글한다. TODO 4 는 뮤텍스를 잡고 "ms,BUTTON," 로그 한 줄.
+- TODO 5 (handleApi): 뮤텍스를 잡고 latest 를 복사한 뒤 바로 풀고 JSON 전송.
+- `handleLog` 는 `server.streamFile` 로 파일을 그대로 내려 주고, `handleClear` 는 파일을 지운 뒤 303 + Location "/" 로 첫 페이지로 돌려보낸다.
+- setup 은 큐 · 뮤텍스 → 태스크 → attachInterrupt 순서로 만들고, Wi-Fi 연결이 15초 안에 안 되면 AP 모드(ESP32-MONITOR)로 바꾼다.
+- loop 는 `server.handleClient()` 와 2 ms vTaskDelay 만 한다.
+
+@@ mcu-d4-sec8-3
+종합 과제 8-A 정답이다.
+- TODO 1: `dht.readTemperature()`, `analogRead(34)`, `millis()` 로 r 을 채우고 대기 0 으로 큐에 보낸다.
+- TODO 2: `xSemaphoreTake` → `latest = r` → `FILE_APPEND` 로 열어 `"%lu,%.1f,%d\n"` 한 줄 쓰고 close → `xSemaphoreGive`. 파일 열기 실패(f 가 거짓)면 쓰지 않는다.
+- TODO 3: 꺼져 있을 때 30 이상이면 켜고, 켜져 있을 때 29 미만이면 끈다. 그 사이에서는 상태를 유지해 깜빡이지 않는다.
+- TODO 4: 같은 뮤텍스를 잡고 "ms,BUTTON," 한 줄을 이어 쓴다. 로거와 같은 파일을 쓰므로 반드시 잠근다.
+- TODO 5: 뮤텍스를 짧게 잡고 latest 를 지역 변수로 복사한 뒤 바로 해제하고, 복사본으로 JSON 을 만든다. 잠근 채 네트워크 전송을 하면 그동안 로거가 기다린다. NaN 이면 0.0 으로 보낸다.
+
+@@ mcu-d4-sec8-inline
+8교시(종합 프로젝트 · 정리) 본문에 나온 코드 조각이다.
+- `iot_monitor.ino`: 종합 과제 8-A 스케치.
+- `handleApi`: latest 를 JSON 으로 보내는 핸들러. 뮤텍스를 짧게 잡는다.
+- `ms`: reading_t 의 측정 시각 필드 (millis 값).
+- `2026-09-24 14:03:21`: 확장 과제에서 NTP 로 바꿀 로그 시각 형식.
+- `taskDisplay`: 확장 과제에서 LCD 에 IP · 온도를 보여 줄 태스크.
+- `LiquidCrystal lcd(13, 14, 23, 32, 33, 22);`: 버튼(GPIO4)과 겹치지 않게 D7 을 GPIO22 로 옮긴 LCD 생성.
+- `/api`: 최신 값 JSON 경로.
+- `/log.csv`: 로그 파일 경로이자 다운로드 주소.
+- `ms,temp,pot`: 로그 한 줄의 열 순서.
+- `BUTTON`: 버튼을 누를 때 로그에 남기는 표시.
+- `vTaskDelay`: 태스크가 주기마다 쉬게 하는 함수.
+- `…FromISR`: ISR 에서는 이름 끝이 FromISR 인 함수만 쓴다 (Day 4 정리 문장).
+- `FILE_APPEND`: 로그 이어 쓰기 모드.
+- `close`: 파일은 반드시 닫는다.
+- `anim/worksheet.html`: 개념 워크시트 페이지.
+- `log.csv`: 제출할 내려받은 로그 파일.

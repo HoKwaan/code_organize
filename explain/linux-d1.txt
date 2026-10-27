@@ -1,0 +1,660 @@
+@@ linux-d1-intro-t1
+Linux Day 1 시간표다. 1교시 환경 점검, 2교시 Shell 필수, 3교시 Makefile · 측정 스크립트, 4교시 시스템 콜과 커널 경계, 5교시 에러 처리와 /proc, 6교시 프로세스 생성(fork · exec · wait), 7교시 좀비 · 고아 · 시그널, 8교시 종합 실습 myshell 이다. 교시마다 animation.html 의 D1-N 애니메이션이 짝지어져 있다.
+
+@@ linux-d1-intro-inline
+Day 1 개요 본문에 나온 코드 조각이다.
+- `src/`: 예제 소스가 들어 있는 폴더. PuTTY 에서 이 안의 파일을 빌드한다.
+- `make 이름`: Makefile 규칙으로 예제 하나를 빌드하는 방법 (예: make 01_printf).
+- `animation.html`: 교시별 개념 애니메이션 페이지.
+
+@@ linux-d1-sec1-1
+PuTTY 로 VM 에 접속했을 때 보이는 셸 프롬프트다. `ubuntu` 는 사용자, `ubuntu-server` 는 호스트 이름, `~` 는 현재 위치(홈 디렉터리), `$` 는 일반 사용자 프롬프트라는 뜻이다 (root 면 #).
+
+@@ linux-d1-sec1-2
+실습 환경을 세 줄로 확인한다.
+- `uname -r`: 실행 중인 커널 릴리스 (5.15.0-125-generic).
+- `lsb_release -a`: Ubuntu 배포판 버전 (22.04.5 LTS).
+- `nproc`: 쓸 수 있는 vCPU 수 (2).
+커널이 5.15 라 스케줄러는 운영체제 과목에서 배운 CFS 다. 6.x 가 나오면 HWE 커널로 올라간 것이라 Day 2 해석이 달라진다.
+
+@@ linux-d1-sec1-4
+과목 전체에 필요한 개발 도구를 설치한다.
+- `sudo apt update` 로 패키지 목록을 새로 받는다.
+- `build-essential`(gcc · make), `gdb`(디버거), `strace`(시스템 콜 추적), `valgrind`(메모리 검사), `stress-ng`(부하 생성)를 설치한다.
+- `linux-tools-$(uname -r)` 은 지금 커널에 맞는 perf, `linux-headers-$(uname -r)` 은 Day 4 커널 모듈 빌드에 필요한 헤더다. `$(uname -r)` 은 명령 결과로 바꿔 넣는 명령 치환이다.
+- `-y` 는 설치 확인 질문에 자동으로 yes, 줄 끝 `\` 는 다음 줄로 이어 쓰기다.
+
+@@ linux-d1-sec1-5
+Day 1 실습 폴더를 만든다. `mkdir -p` 는 중간 디렉터리(linux-course)까지 한 번에 만들고 이미 있어도 오류를 내지 않는다. 이후 FileZilla 로 Windows 의 src 폴더를 이 안에 올린다.
+
+@@ linux-d1-sec1-6
+올린 src 폴더로 이동해 파일을 확인하고 환경 점검 스크립트를 실행한다. `bash check_env.sh` 는 실행 권한이 없어도 bash 로 직접 실행하는 방법이다. [WARN] 이 나온 항목, 특히 vCPU 1개와 sudo 권한 없음은 Day 2 전에 해결한다.
+
+@@ linux-d1-sec1-7
+실습 환경을 점검하는 bash 스크립트다. 항목마다 `ok` / `warn` 함수로 [ OK ] · [WARN] 을 찍는다.
+- 1. `/etc/os-release` 를 `.`(source)로 읽어 배포판이 22.04 인지, `uname -r` 이 5.15.* 인지(CFS 스케줄러) 확인한다.
+- 2. `nproc` 이 2 이상인지, `/proc/meminfo` 의 MemTotal 이 약 4GB 인지, `df` 로 루트 여유 공간이 5GB 이상인지 본다. `systemd-detect-virt` 로 가상화 종류, `/sys/firmware/efi` 와 `mokutil` 로 Secure Boot 여부(켜져 있으면 Day 4 모듈 로드 거부)를 확인한다.
+- 3. `sudo -n true` 로 sudo 권한, 안 되면 `id -nG` 에 sudo 그룹이 있는지 본다.
+- 4. `command -v` 로 gcc · make · gdb · strace · valgrind · perf · stress-ng 가 있는지, `/lib/modules/$KREL/build` 로 커널 헤더가 있는지 확인한다.
+`[[ "$KREL" == 5.15.* ]]` 은 패턴 비교, `$(( … ))` 는 산술 계산, `2>/dev/null` 은 오류 출력 버리기다.
+
+@@ linux-d1-sec1-8
+1교시 환경 확인 명령의 빈칸 채우기다.
+- 빈칸 ① `-r`: `uname -r` 은 커널 릴리스만 출력한다 (-a 전부, -m 아키텍처).
+- 빈칸 ② `nproc`: vCPU 수를 숫자 하나로.
+- 빈칸 ③ `-p`: 중간 디렉터리까지 만들고 이미 있어도 오류 없음.
+- 빈칸 ④ `apt`: Ubuntu 패키지 관리자. 시스템을 바꾸므로 sudo 가 필요하다.
+
+@@ linux-d1-sec1-t1
+과목 5일의 주제와 대표 결과물이다. Day 1 시스템 콜 · 프로세스(myshell.c), Day 2 스케줄링(jitter.c), Day 3 메모리(memlab.c), Day 4 파일시스템 · sysfs(sysmon.c, mysysfs.ko), Day 5 쓰레드 · 동기화(edge_pipeline.c). 운영체제 과목에서 애니메이션으로 본 동작을 C 로 직접 일으키고 숫자로 측정한다.
+
+@@ linux-d1-sec1-t2
+실습 VM 정보표다. Ubuntu Server 22.04.5 LTS(GUI 없음), vCPU 2 · 메모리 4GB · 디스크 30GB · NAT 네트워크. PuTTY 로 127.0.0.1 포트 2222 에 공개키로 접속하고, FileZilla 로 SFTP(같은 .ppk 키) 파일 전송을 한다. 계정은 ubuntu@ubuntu-server.
+
+@@ linux-d1-sec1-p1-2
+환경 확인을 정리하는 괄호 넣기다.
+1. 커널 버전은 `uname -r`.
+2. vCPU 수는 `nproc`.
+3. 패키지 설치는 `sudo apt install 패키지명`.
+4. PuTTY 는 127.0.0.1 의 2222 포트로 접속한다. VM 주소 10.0.2.15 는 NAT 안쪽이라 Windows 에서 직접 닿지 않아, 포트 포워딩이 127.0.0.1:2222 를 VM 의 22번(SSH)으로 넘겨 준다.
+
+@@ linux-d1-sec1-inline
+1교시(오리엔테이션 · 환경 점검) 본문에 나온 코드 조각이다.
+- `myshell.c`: Day 1 결과물, 미니 셸.
+- `jitter.c`: Day 2 결과물, 주기 지터 측정.
+- `memlab.c`: Day 3 결과물, 메모리 실험.
+- `sysmon.c`: Day 4 결과물, 시스템 모니터.
+- `mysysfs.ko`: Day 4 결과물, sysfs 커널 모듈.
+- `edge_pipeline.c`: Day 5 결과물, 쓰레드 파이프라인.
+- `127.0.0.1`: Windows 자기 자신 주소. 포트 포워딩으로 VM 에 닿는다.
+- `2222`: VM SSH(22)로 넘겨 주는 Windows 쪽 포트.
+- `.ppk`: PuTTY 형식 개인키 파일.
+- `ubuntu@ubuntu-server`: 사용자@호스트 계정 표시.
+- `Ubuntu-22.04-Server`: VirtualBox 에 등록된 VM 이름.
+- `6.x`: uname -r 이 이렇게 나오면 HWE 커널(스케줄러 EEVDF)이라 강사에게 알린다.
+- `src`: Windows 쪽 예제 폴더 이름.
+- `/home/ubuntu/linux-course/day1/`: src 를 올릴 VM 쪽 경로.
+- `[WARN]`: check_env.sh 가 문제 항목에 찍는 표시.
+- `sudo poweroff`: VM 을 끄는 명령 (vCPU 설정 변경 전).
+- `src/check_env.sh`: 환경 점검 스크립트.
+- `uname -r`: 커널 릴리스 출력.
+- `-a`: uname 의 모든 정보 옵션.
+- `-m`: uname 의 아키텍처(x86_64) 옵션.
+- `nproc`: vCPU 수 출력.
+- `mkdir -p`: 중간 디렉터리까지 만들기.
+- `sudo apt`: 관리자 권한으로 패키지 관리.
+- `uname ____`: 괄호 넣기 1번. 답은 `-r`.
+- `sudo ____ install 패키지명`: 괄호 넣기 3번. 답은 `apt`.
+- `127.0.0.1:2222`: PuTTY 접속 주소:포트.
+
+@@ linux-d1-sec2-1
+기본 파일 조작 명령이다.
+- `mkdir -p test/a/b`: 중간 디렉터리까지 한 번에 만든다.
+- `touch test/hello.c`: 빈 파일을 만든다 (있으면 수정 시각만 갱신).
+- `cp 원본 대상/`: 복사.
+- `mv 이전 새이름`: 이름 변경 또는 이동.
+- `rm -r test`: 디렉터리를 안의 내용째 삭제한다. 휴지통이 없어 되돌릴 수 없다.
+
+@@ linux-d1-sec2-2
+파일에 실행 권한을 준다. `ls -l` 맨 앞 `-rw-r--r--` 은 종류(-: 일반 파일) 다음 rwx 세 묶음이 차례대로 소유자 · 그룹 · 그 외 권한이다. `chmod +x run.sh` 로 모두에게 실행(x) 권한을 더하면 `-rwxr-xr-x` 가 되고 `./run.sh` 로 실행할 수 있다. 실행 권한이 없으면 Permission denied 가 난다.
+
+@@ linux-d1-sec2-3
+파이프 `|` 로 앞 명령의 출력을 다음 명령의 입력으로 넘긴다.
+- `grep processor /proc/cpuinfo | wc -l`: cpuinfo 에서 processor 줄만 골라 줄 수를 세면 코어 수다.
+- `ps aux | grep -v grep | grep bash`: 모든 프로세스 목록에서 grep 자신(-v 로 제외)을 빼고 bash 가 든 줄만 찾는다.
+
+@@ linux-d1-sec2-4
+백그라운드 실행과 작업 관리다.
+- `sleep 30 &`: 끝에 & 를 붙이면 백그라운드로 돌고 프롬프트가 바로 돌아온다.
+- `jobs`: 이 셸의 백그라운드 작업 목록.
+- `echo $!`: 방금 백그라운드로 띄운 프로세스의 PID.
+- `kill %1`: 작업 번호 1 을 종료한다 (% 는 작업 번호, 숫자만 쓰면 PID).
+
+@@ linux-d1-sec2-t1
+이동과 확인 명령표다.
+- `pwd`: 현재 위치 출력.
+- `cd`: 이동. `cd ..` 상위, `cd -` 직전 위치.
+- `ls -l`: 자세히 목록 (`-a` 는 숨김 파일 포함).
+- `cat` / `less`: 파일 내용 보기. less 는 페이지 단위이고 q 로 나간다.
+절대 경로는 / 로 시작하고, 상대 경로는 현재 위치 기준이다. ~ 는 홈, . 은 현재, .. 은 상위 디렉터리다.
+
+@@ linux-d1-sec3-4
+측정 스크립트를 실행한다. `chmod +x run.sh` 로 실행 권한을 주고, `./run.sh ./02_syscall_direct 5 r.csv` 로 프로그램을 5번 실행해 걸린 시간을 r.csv 에 남긴다. 측정은 한 번으로 믿지 않고 여러 번 반복한다.
+
+@@ linux-d1-sec2-5
+셸 기본 기호의 빈칸 채우기다.
+- 빈칸 ① `|`: 앞 명령의 표준 출력을 뒤 명령의 표준 입력으로 잇는다.
+- 빈칸 ② `2>&1`: fd 2(에러)를 fd 1 이 지금 가리키는 곳(build.log)으로 보낸다. 셸은 리다이렉션을 왼쪽부터 적용하므로 반드시 `> build.log` 뒤에 써야 둘 다 파일로 간다.
+- 빈칸 ③ `+x`: 실행 권한을 더한다.
+- 빈칸 ④ `&`: 셸이 끝나길 기다리지 않게 백그라운드로 띄운다.
+- 빈칸 ⑤ `$!`: 마지막으로 띄운 백그라운드 프로세스의 PID.
+
+@@ linux-d1-sec2-t2
+리다이렉션 · 파이프 기호표다.
+- `>`: 표준 출력을 파일로 (덮어쓰기).
+- `>>`: 파일 끝에 추가.
+- `2>`: 에러 출력(fd 2)만 파일로.
+- `2>&1`: 에러를 표준 출력과 같은 곳으로.
+- `|`: 앞 명령 출력을 뒤 명령 입력으로.
+
+@@ linux-d1-sec2-t3
+nano 편집기 키 표다. `nano 파일명` 으로 열고(없으면 새로 만듦), Ctrl+O → Enter 로 저장(Write Out), Ctrl+X 로 종료, Ctrl+W 로 찾기, Alt+N 으로 줄 번호 표시를 켜고 끈다. PuTTY 에서 복사는 드래그, 붙여넣기는 마우스 오른쪽 클릭이고, Ctrl+C 는 복사가 아니라 실행 중인 프로그램을 멈추는 키다.
+
+@@ linux-d1-sec2-p2-2
+셸 필수 기호를 확인하는 괄호 넣기다.
+1. `chmod +x run.sh` 로 실행 권한을 더한다 (u+x 는 소유자만, 755 는 rwxr-xr-x 통째 지정).
+2. `make > log.txt 2>&1` 로 출력과 에러를 모두 파일로 보낸다.
+3. 출력을 다음 명령 입력으로 잇는 기호는 `|`.
+4. 방금 띄운 백그라운드 PID 는 `$!`.
+5. nano 저장은 Write Out 의 O, 즉 Ctrl+O.
+
+@@ linux-d1-sec2-inline
+2교시(Shell 필수) 본문에 나온 코드 조각이다.
+- `pwd`: 현재 위치 출력.
+- `cd`: 디렉터리 이동.
+- `cd ~/linux-course`: 홈 아래 linux-course 로 이동.
+- `cd ..`: 상위 디렉터리로.
+- `cd -`: 직전에 있던 디렉터리로.
+- `ls -l`: 권한 · 크기 · 시각까지 자세히 목록.
+- `ls -la /proc/self`: 숨김 파일 포함 목록. /proc/self 는 지금 ls 프로세스 자신의 정보 폴더.
+- `cat`: 파일 내용을 한 번에 출력.
+- `less`: 파일을 페이지 단위로 보기 (q 로 나감).
+- `cat /proc/cpuinfo`: CPU 정보 보기.
+- `less /var/log/syslog`: 시스템 로그를 페이지로 보기.
+- `/home/ubuntu/linux-course`: / 로 시작하는 절대 경로 예.
+- `../day2`: 현재 위치 기준 상대 경로 예.
+- `..`: 상위 디렉터리.
+- `rwx`: 읽기 · 쓰기 · 실행 권한 묶음.
+- `./run.sh`: 현재 폴더의 run.sh 실행 (실행 권한 필요).
+- `Permission denied`: 실행 권한 없이 실행할 때 나는 오류.
+- `./a.out > out.txt`: 출력을 파일로 덮어쓰기.
+- `>>`: 파일 끝에 덧붙이기.
+- `date >> log.txt`: 날짜를 log.txt 끝에 추가.
+- `2>`: 에러 출력만 리다이렉션.
+- `./a.out 2> err.txt`: 에러만 err.txt 로.
+- `2>&1`: 에러를 표준 출력과 같은 곳으로.
+- `make > build.log 2>&1`: 빌드 출력과 에러를 모두 build.log 로.
+- `ps aux | grep bash`: 프로세스 목록에서 bash 찾기.
+- `nano 파일명`: nano 로 파일 열기.
+- `Ctrl+O`: nano 저장.
+- `Enter`: 저장할 파일 이름 확인.
+- `Ctrl+X`: nano 종료.
+- `Ctrl+W`: nano 찾기.
+- `Alt+N`: nano 줄 번호 표시 켜기 · 끄기.
+- `Ctrl+C`: 실행 중인 프로그램에 SIGINT 를 보내 멈춘다.
+- `> build.log`: 2>&1 보다 먼저 와야 하는 출력 리다이렉션.
+- `chmod +x`: 실행 권한 더하기.
+- `$!`: 마지막 백그라운드 PID.
+- `chmod ____ run.sh`: 괄호 넣기 1번. 답은 `+x`.
+- `log.txt`: 괄호 넣기 2번의 로그 파일.
+- `make > log.txt ____`: 괄호 넣기 2번. 답은 `2>&1`.
+- `Ctrl+____`: 괄호 넣기 5번. 답은 `O`.
+- `+x`: 모두에게 실행 권한 추가.
+- `u+x`: 소유자에게만 실행 권한 추가.
+- `755`: rwxr-xr-x 를 8진수로 통째 지정.
+
+@@ linux-d1-sec3-1
+Day 1 공통 Makefile 이다. 폴더의 모든 .c 를 각각 같은 이름의 실행 파일로 만든다.
+- `CC = gcc`, `CFLAGS = -Wall -Wextra -g` 는 컴파일러와 옵션 변수다 (-Wall -Wextra 경고 최대, -g 디버그 정보).
+- `SRCS = $(wildcard *.c)` 는 모든 .c 파일 목록, `TARGETS = $(SRCS:.c=)` 는 거기서 .c 를 지운 실행 파일 이름 목록이다.
+- `all: $(TARGETS)` 이 첫 규칙이라 그냥 `make` 하면 전부 빌드한다.
+- `%: %.c` 패턴 규칙은 foo 를 foo.c 로 만든다. 명령의 `$@` 는 대상, `$<` 는 첫 재료다. 명령 줄은 반드시 탭으로 시작한다.
+- `clean` 은 실행 파일을 지우고, `.PHONY` 는 all · clean 이 실제 파일 이름이 아님을 알린다.
+make 는 재료가 대상보다 새로울 때만 다시 빌드한다.
+
+@@ linux-d1-sec3-2
+Makefile 사용법이다. `make` 는 전부, `make 03_errno` 는 하나만 빌드한다. `touch 03_errno.c && make` 로 03 의 수정 시각만 바꾸면 03 만 다시 빌드되는 것을 확인할 수 있다. `make clean` 은 실행 파일을 지운다.
+
+@@ linux-d1-sec3-3
+프로그램을 N회 실행해 실행 시간을 CSV 로 남기는 스크립트다.
+- `$# -lt 2` 면 사용법을 출력하고 `exit 1` 로 끝낸다. `$0` 은 스크립트 자신의 이름이다.
+- `PROG=$1`, `N=$2`, `OUT=${3:-result.csv}` 로 인자를 받는다 (셋째가 없으면 기본값).
+- 머리줄 "run,elapsed_ms" 를 `>` 로 새로 쓴 뒤, `$(seq 1 "$N")` 만큼 반복한다.
+- `date +%s%N` 은 나노초 단위 현재 시각이다. 실행 전후 차이를 `$(( … / 1000000 ))` 로 ms 로 바꿔 `>>` 로 덧붙인다.
+- 프로그램 출력은 `> /dev/null` 로 버려 측정만 남긴다.
+
+@@ linux-d1-sec3-5
+패턴 규칙 Makefile 의 빈칸 채우기다.
+- 빈칸 ① `*.c`: `$(wildcard *.c)` 로 폴더의 모든 .c 목록을 만든다.
+- 빈칸 ② `$@`: 만들 대상 (예: 03_errno).
+- 빈칸 ③ `$<`: 첫 번째 재료 (03_errno.c).
+- 빈칸 ④ `.PHONY`: all · clean 이 파일 이름이 아니라고 알려, 같은 이름 파일이 있어도 항상 실행되게 한다.
+
+@@ linux-d1-sec3-7
+run.sh 앞부분의 빈칸 채우기다. `./run.sh ./prog 5 r.csv` 면 $1=./prog, $2=5, $3=r.csv, $#=3 이다.
+- 빈칸 ① `$#`: 인자 개수. 2 보다 적으면 사용법 출력.
+- 빈칸 ② `$1`: 첫째 인자, 실행할 프로그램.
+- 빈칸 ③ `:-`: `${3:-result.csv}` 는 셋째 인자가 비었거나 없으면 기본값을 쓴다.
+- 빈칸 ④ `seq`: `$(seq 1 "$N")` 은 1 부터 N 까지 숫자를 만들어 그 자리에 넣는 명령 치환이다.
+
+@@ linux-d1-sec3-t1
+Makefile 요소표다.
+- `CC`, `CFLAGS`: 변수. `$(CFLAGS)` 처럼 꺼내 쓴다.
+- `$(wildcard *.c)`: 현재 폴더의 모든 .c 목록.
+- `$(SRCS:.c=)`: 목록에서 .c 를 지운 것 → 실행 파일 이름.
+- `%: %.c`: 패턴 규칙. foo 는 foo.c 로 만든다.
+- `$@` / `$<`: 만들 대상 / 첫 번째 재료.
+- 탭: 명령 줄은 반드시 탭으로 시작한다 (스페이스면 missing separator 에러).
+
+@@ linux-d1-sec3-t2
+셸 스크립트 문법표다.
+- `#!/bin/bash`: shebang. 이 파일을 bash 로 실행하라는 표시.
+- `$1`, `$2`, `$#`: 첫째 · 둘째 인자, 인자 개수.
+- `${3:-result.csv}`: 셋째 인자가 없으면 기본값.
+- `$(seq 1 "$N")`: 명령의 출력을 그 자리에 넣는 명령 치환.
+- `$(( ... ))`: 정수 산술.
+
+@@ linux-d1-sec3-p3-3
+Makefile · 셸 스크립트를 확인하는 괄호 넣기다.
+1. Makefile 명령 줄은 탭으로 시작한다 (스페이스면 missing separator).
+2. 만들 대상 자동 변수는 `$@`.
+3. 인자 개수 변수는 `$#`.
+4. 명령 출력을 그 자리에 넣는 문법은 `$( )` (명령 치환).
+
+@@ linux-d1-sec3-inline
+3교시(Makefile · 측정 스크립트) 본문에 나온 코드 조각이다.
+- `gcc -Wall -Wextra -g -o 01 01.c`: 예제 하나를 손으로 빌드하는 명령. 10개면 10번 쳐야 해서 Makefile 을 쓴다.
+- `src/Makefile`: Day 1 공통 Makefile.
+- `CC`: 컴파일러 변수 (gcc).
+- `CFLAGS`: 컴파일 옵션 변수.
+- `$(CFLAGS)`: 변수를 꺼내 쓰는 문법.
+- `$(wildcard *.c)`: 폴더의 모든 .c 목록.
+- `.c`: C 소스 확장자. 실행 파일 이름에서 지운다.
+- `$(SRCS:.c=)`: 목록의 .c 를 지운 실행 파일 이름 목록.
+- `%: %.c`: 패턴 규칙.
+- `foo`: 패턴 규칙의 대상 예.
+- `foo.c`: foo 를 만드는 재료.
+- `$@`: 만들 대상 자동 변수.
+- `$<`: 첫 번째 재료 자동 변수.
+- `missing separator`: 명령 줄이 탭이 아니라 스페이스로 시작할 때 나는 make 오류.
+- `src/run.sh`: 반복 측정 스크립트.
+- `#!/bin/bash`: shebang. bash 로 실행하라는 표시.
+- `$1`: 첫째 인자.
+- `$2`: 둘째 인자.
+- `$#`: 인자 개수.
+- `${3:-result.csv}`: 셋째 인자가 없으면 기본값.
+- `$(seq 1 "$N")`: 1 부터 N 까지 숫자 목록으로 바꾸는 명령 치환.
+- `$(( ... ))`: 정수 산술.
+- `.PHONY`: 파일이 아닌 대상(all, clean) 선언.
+- `./run.sh ./prog 5 r.csv`: 빈칸 채우기 3-2 의 실행 예.
+- `$3`: 셋째 인자 (r.csv).
+- `$( )`: 명령 치환 문법.
+
+@@ linux-d1-sec4-1
+printf 출력이 커널까지 가는 경로 그림이다. 사용자 모드의 `printf()` 는 먼저 glibc 의 stdio 버퍼에 모았다가 `write()` 래퍼를 부른다. 래퍼가 `syscall` 명령(write 번호 1)을 실행하면 CPU 가 커널 모드로 바뀌어 `sys_write()` 가 터미널 드라이버로 글자를 보낸다. 시스템 콜은 `man 2`, C 라이브러리 함수는 `man 3` 에 설명이 있다.
+
+@@ linux-d1-sec4-2
+라이브러리 함수 printf 와 시스템 콜 write 를 비교한다.
+- `write(1, msg, strlen(msg))` 는 fd 1(표준 출력)로 바로 커널에 쓴다.
+- `printf` 5줄은 stdio 버퍼에 쌓였다가 write 로 나간다.
+- return 0 으로 끝나도 exit 과정에서 fflush 가 호출되어 버퍼가 비워진다.
+터미널로 출력하면 줄 단위 버퍼링이라 줄마다 write 가 호출되지만, 파이프나 파일로 보내면 블록 단위라 printf 5줄이 write 한 번으로 합쳐지고, 먼저 호출한 write 문장보다 늦게 나온다.
+
+@@ linux-d1-sec4-3
+예제 01 을 빌드하고 출력 경로에 따른 차이를 관찰한다.
+- 그냥 실행하면 write 문장 → printf 5줄 순서.
+- `| cat` 으로 파이프에 보내면 printf 가 블록 버퍼링되어 출력 순서와 write 호출 수가 바뀐다.
+- `strace -e trace=write` 는 write 시스템 콜만 골라 보여 준다. 파이프일 때 printf 5줄이 write 한 번(70바이트)으로 합쳐진 것을 확인할 수 있다.
+
+@@ linux-d1-sec4-5
+glibc 래퍼와 `syscall()` 직접 호출을 비교한다.
+- `getpid()` 는 glibc 래퍼, `syscall(SYS_getpid)` 는 시스템 콜 번호로 직접 호출한다. 둘은 같은 값을 돌려준다.
+- `SYS_getpid`(x86_64 에서 39), `SYS_write`(1) 번호를 출력한다.
+- `syscall(SYS_write, 1, …, 길이)` 로 write 도 직접 호출한다. `sizeof("…") - 1` 은 문자열 끝 '\0' 을 뺀 길이다.
+- `#define _GNU_SOURCE` 는 syscall() 선언을 쓰기 위해 필요하다.
+glibc 함수는 번호를 레지스터에 넣고 syscall 명령을 실행하는 얇은 포장이다.
+
+@@ linux-d1-sec4-6
+예제 02 를 빌드 · 실행하고, `strace -c` 로 호출된 시스템 콜 종류별 횟수 · 시간 통계를 본다. 출력은 `> /dev/null` 로 버리고 strace 통계(stderr)만 남긴다.
+
+@@ linux-d1-sec4-7
+시스템 콜을 래퍼 없이 부르는 빈칸 채우기다.
+- 빈칸 ① `syscall.h`: `SYS_getpid` 같은 번호 상수는 `<sys/syscall.h>` 에 있다.
+- 빈칸 ② `1`: 표준 출력 fd.
+- 빈칸 ③ `SYS_getpid`: getpid 의 시스템 콜 번호.
+- 빈칸 ④ `getpid`: glibc 래퍼. 직접 호출 결과와 같다.
+
+@@ linux-d1-sec4-p4-2
+시스템 콜 개념을 확인하는 괄호 넣기다.
+1. 시스템 콜이 호출되면 CPU 는 커널 모드로 바뀐다.
+2. 시스템 콜 설명서는 `man 2 write` (3 은 라이브러리 함수).
+3. 프로그램이 부른 시스템 콜을 한 줄씩 보여 주는 도구는 strace.
+4. 출력이 파이프 · 파일이면 printf 는 블록 단위로 버퍼링해 write 호출 수가 준다.
+
+@@ linux-d1-sec4-inline
+4교시(시스템 콜과 커널 경계) 본문에 나온 코드 조각이다.
+- `man 2 write`: 시스템 콜 write 의 설명서 (섹션 2).
+- `man 3 printf`: C 라이브러리 함수 printf 의 설명서 (섹션 3).
+- `src/01_write_vs_printf.c`: 예제 01 소스.
+- `| cat`: 출력을 파이프로 보내 블록 버퍼링을 일으킨다.
+- `src/02_syscall_direct.c`: 예제 02 소스.
+- `getpid()`: 내 PID 를 돌려주는 glibc 래퍼.
+- `syscall(SYS_getpid)`: 같은 일을 번호로 직접 호출.
+- `syscall`: 번호와 인자로 시스템 콜을 직접 부르는 함수 (또는 CPU 명령).
+- `write`: 시스템 콜 1번. fd 에 바이트를 쓴다.
+- `getpid`: 시스템 콜 39번 (x86_64).
+- `SYS_getpid`: getpid 번호 상수.
+- `<sys/syscall.h>`: SYS_* 번호가 정의된 헤더.
+- `write(1, …)`: fd 1(표준 출력)에 쓰기.
+- `man ____ write`: 괄호 넣기 2번. 답은 `2`.
+
+@@ linux-d1-sec5-1
+시스템 콜이 실패하면 -1 을 돌려주고 `errno` 에 원인 번호를 남기는 것을 확인한다.
+- `try_open()` 은 open 이 -1 이면 `errno` 와 `strerror(errno)` 문장을 출력하고, 성공하면 fd 를 출력하고 닫는다.
+- /etc/hostname 은 성공(fd=3, 0·1·2 는 표준 입출력이 이미 씀), /no/such/file 은 ENOENT(2), /etc/shadow 는 일반 사용자라 EACCES(13), /etc 를 쓰기로 열면 EISDIR(21).
+- `close(100)` 은 열리지 않은 fd 라 EBADF 이고, `perror("close(100)")` 은 "close(100): Bad file descriptor" 처럼 접두어를 붙여 출력한다.
+sudo 로 실행하면 root 는 권한 검사를 통과해 /etc/shadow 도 성공한다. errno 는 실패했을 때만 의미가 있다.
+
+@@ linux-d1-sec5-3
+/proc 가상 파일시스템을 읽어 본다. 읽는 순간 커널이 그때 값을 만들어 준다.
+- `cat /proc/self/status | head -10`: 지금 읽는 프로세스(cat) 자신의 이름 · 상태 · PID · PPID 등 앞 10줄.
+- `ls -l /proc/self/fd`: 그 프로세스가 연 fd 목록 (0 · 1 · 2 가 터미널을 가리킴).
+- `cat /proc/loadavg`: 1 · 5 · 15분 평균 부하와 실행 중/전체 태스크 수.
+
+@@ linux-d1-sec5-t1
+흔한 errno 표다.
+- 2 `ENOENT`: 파일 · 경로가 없음.
+- 13 `EACCES`: 권한 없음.
+- 9 `EBADF`: 열려 있지 않은 fd.
+- 21 `EISDIR`: 디렉터리를 쓰기로 열려 함.
+
+@@ linux-d1-sec5-4
+/proc/self/status 를 C 로 읽어 내 프로세스 정보를 출력한다.
+- `read_status(key, out, size)` 는 파일을 `fopen` 으로 열고 `fgets` 로 한 줄씩 읽어, `strncmp` 로 "key:" 로 시작하는 줄을 찾는다. 콜론 뒤 공백 · 탭을 건너뛰고, `strcspn(v, "\n")` 으로 줄바꿈 위치를 찾아 '\0' 으로 잘라 out 에 복사한다. 찾으면 0, 아니면 -1.
+- main 은 Name · State · Pid · PPid · Threads · VmRSS 를 출력한 뒤, 50MB 를 malloc 하고 `memset` 으로 실제로 써서 VmRSS 가 약 50MB 늘어나는 것을 보여 준다.
+VmRSS 는 실제로 물리 메모리를 차지하는 크기다. memset 을 지우면 RSS 가 거의 늘지 않는다 (Day 3 demand paging).
+
+@@ linux-d1-sec5-6
+없는 파일을 열어 실패 원인을 출력하는 빈칸 채우기다.
+- 빈칸 ① `-1`: open 은 실패하면 -1 을 돌려준다.
+- 빈칸 ② `errno`: 원인 번호가 남는 전역 변수.
+- 빈칸 ③ `strerror`: 번호를 "No such file or directory" 같은 문장으로 바꾼다.
+- 빈칸 ④ `perror`: "open: …" 형식으로 표준 에러에 바로 출력한다.
+errno 는 반환값이 -1 일 때만 읽는다.
+
+@@ linux-d1-sec5-8
+내 프로세스의 VmRSS 줄만 출력하는 빈칸 채우기다.
+- 빈칸 ① `self`: /proc/self 는 지금 읽는 프로세스 자신.
+- 빈칸 ② `NULL`: fopen 실패 검사.
+- 빈칸 ③ `fgets`: 한 줄씩 읽고, 파일 끝이면 NULL 로 반복이 끝난다.
+- 빈칸 ④ `6`: "VmRSS:" 는 콜론까지 6글자.
+- 빈칸 ⑤ `fclose`: 다 읽으면 닫는다.
+
+@@ linux-d1-sec5-p5-3
+에러 처리 · /proc 을 확인하는 괄호 넣기다.
+1. 시스템 콜이 실패하면 대부분 -1 을 반환한다.
+2. 원인 번호는 전역 변수 errno 에 남는다.
+3. 없는 파일은 ENOENT(2) 다 (권한 문제는 EACCES 13).
+4. 현재 프로세스 자신은 /proc/self 다. 읽는 프로세스마다 다른 곳을 가리킨다.
+
+@@ linux-d1-sec5-inline
+5교시(에러 처리 · /proc) 본문에 나온 코드 조각이다.
+- `errno`: 실패 원인 번호가 남는 전역 변수.
+- `ENOENT`: 2, 파일 · 경로 없음.
+- `EACCES`: 13, 권한 없음.
+- `EBADF`: 9, 열리지 않은 fd.
+- `EISDIR`: 21, 디렉터리를 쓰기로 열려 함.
+- `src/03_errno.c`: 예제 03 소스.
+- `sudo ./03_errno`: root 로 실행하면 권한 검사를 통과한다.
+- `/etc/shadow`: 비밀번호 해시 파일. 일반 사용자는 읽을 수 없다.
+- `/proc`: 커널이 읽는 순간 값을 만들어 주는 가상 파일시스템.
+- `/proc/self`: 읽는 프로세스 자신의 정보 폴더.
+- `src/04_proc_self.c`: 예제 04 소스.
+- `VmRSS`: 실제 물리 메모리 사용량.
+- `malloc`: 메모리 할당. 할당만으로는 RSS 가 거의 늘지 않는다.
+- `memset`: 실제로 써서 페이지를 물리 메모리에 올린다.
+- `-1`: 시스템 콜 실패 반환값.
+- `strerror(errno)`: errno 를 문장으로.
+- `perror("open")`: "open: 원인" 을 stderr 로 출력.
+- `fopen`: 파일을 FILE * 로 연다.
+- `NULL`: fopen · fgets 실패/끝 표시.
+- `fgets`: 한 줄 읽기.
+- `"VmRSS:"`: 찾을 줄의 앞부분 (6글자).
+- `strncmp(…, 6)`: 앞 6글자만 비교.
+- `fclose`: 파일 닫기.
+- `/proc/____`: 괄호 넣기 4번. 답은 `self`.
+
+@@ linux-d1-sec6-1
+`fork()` 로 프로세스를 복제하고 반환값으로 부모와 자식을 구분한다.
+- fork 전에 `fflush(stdout)` 로 버퍼를 비운다. 안 비우면 버퍼 내용까지 자식에게 복사되어 파이프 출력 시 "fork 전" 줄이 두 번 나온다.
+- 반환값이 -1 이면 실패, 0 이면 자식, 양수면 부모(자식 PID)다.
+- 자식은 x 를 1 늘리고 PID · PPID 를 출력한 뒤 `exit(0)`, 부모는 x 를 1 줄이고 `wait(NULL)` 로 자식을 기다린 뒤 출력한다.
+자식 x=101, 부모 x=99 인 것은 fork 뒤 두 프로세스가 메모리를 따로 가지기 때문이다 (실제로는 쓰는 순간 복사하는 Copy-on-Write).
+
+@@ linux-d1-sec6-3
+fork → exec → wait 로 명령을 실행하고 종료 상태를 확인한다.
+- 인자가 있으면 `&argv[1]` 을, 없으면 기본 명령 `ls -l /tmp` 를 실행할 명령 배열로 쓴다 (배열 끝은 NULL).
+- 자식은 `execvp(cmd[0], cmd)` 로 PATH 에서 프로그램을 찾아 자신을 교체한다. 성공하면 아래 줄은 실행되지 않고, 실패하면 perror 후 관례대로 `_exit(127)`.
+- 부모는 `waitpid(pid, &status, 0)` 으로 기다린 뒤, `WIFEXITED` 면 `WEXITSTATUS` 로 종료 코드를, `WIFSIGNALED` 면 `WTERMSIG` 로 시그널 번호를 출력한다.
+exec 는 PID 는 그대로 두고 코드 · 데이터만 통째로 바꾼다.
+
+@@ linux-d1-sec6-4
+예제 06 실행 예다. 인자 없이는 `ls -l /tmp` 성공(종료 코드 0), `ls /nope` 은 ls 가 없는 경로라 2, `nosuchcmd` 는 execvp 실패라 127, `sleep 30` 중에 다른 창에서 `kill <자식PID>` 를 보내면 SIGTERM 이라 시그널=15 가 나온다.
+
+@@ linux-d1-sec6-5
+fork → exec → wait 뼈대의 빈칸 채우기다.
+- 빈칸 ① `fork`: 프로세스 복제.
+- 빈칸 ② `0`: 자식은 fork 반환값이 0.
+- 빈칸 ③ `NULL`: execvp 인자 배열은 NULL 로 끝나야 한다.
+- 빈칸 ④ `execvp`: PATH 검색 + 배열 인자로 프로그램 교체.
+- 빈칸 ⑤ `127`: exec 실패 관례 종료 코드.
+- 빈칸 ⑥ `waitpid`: 그 자식을 기다린다.
+- 빈칸 ⑦ `WIFEXITED`: 정상 종료했는가.
+- 빈칸 ⑧ `WEXITSTATUS`: 종료 코드 꺼내기. ls /nope 는 2.
+
+@@ linux-d1-sec6-t1
+fork 반환값 표다. -1 은 부모가 받는 실패, 0 은 자식이 받는 "나는 자식", 양수는 부모가 받는 새 자식의 PID 다. fork 는 한 번 호출해 두 번 반환한다.
+
+@@ linux-d1-sec6-t2
+wait 상태 매크로 표다.
+- `WIFEXITED(s)`: exit() 로 정상 종료했는가.
+- `WEXITSTATUS(s)`: 그때의 종료 코드(0~255).
+- `WIFSIGNALED(s)`: 시그널로 죽었는가.
+- `WTERMSIG(s)`: 어떤 시그널이었나.
+
+@@ linux-d1-sec6-p6-2
+프로세스 생성을 확인하는 괄호 넣기다.
+1. fork 는 자식에게 0 을 돌려준다.
+2. exec 가 성공하면 같은 PID 에 새 프로그램이 덮어써져 다음 줄은 실행되지 않는다.
+3. exit() 로 끝났는지는 `WIFEXITED` 로 검사한다.
+4. exec 실패 관례 종료 코드는 127 (셸의 command not found 와 같음).
+
+@@ linux-d1-sec7-2
+좀비 프로세스를 관찰한다. `./07_zombie &` 로 백그라운드 실행하고, `ps -o pid,ppid,stat,cmd --ppid $!` 로 그 프로세스(부모)의 자식들을 보면 STAT 이 Z, CMD 가 `<defunct>` 인 좀비가 보인다. 자식은 끝났지만 부모가 아직 wait 하지 않아 프로세스 테이블 한 칸이 남은 것이다. 20초 뒤 부모가 waitpid 하면 사라진다.
+
+@@ linux-d1-sec6-inline
+6교시(프로세스 생성) 본문에 나온 코드 조각이다.
+- `fork()`: 호출한 프로세스를 복제한다. 한 번 호출해 두 번 반환.
+- `-1`: fork 실패 반환값 (부모가 받음).
+- `> 0`: 부모가 받는 자식 PID.
+- `src/05_fork_basic.c`: 예제 05 소스.
+- `fflush(stdout)`: fork 전 stdio 버퍼 비우기. 안 하면 버퍼가 자식에게 복제된다.
+- `./05_fork_basic | cat`: 파이프로 실행해 버퍼 복제로 "fork 전" 이 두 번 나오는지 보는 명령.
+- `WIFEXITED(s)`: 정상 종료 여부.
+- `exit()`: 정상 종료 (stdio 버퍼 비움).
+- `WEXITSTATUS(s)`: 종료 코드.
+- `WIFSIGNALED(s)`: 시그널 종료 여부.
+- `WTERMSIG(s)`: 종료시킨 시그널 번호.
+- `src/06_fork_exec_wait.c`: 예제 06 소스.
+- `NULL`: exec 인자 배열 끝 표시. wait(NULL) 은 상태를 받지 않겠다는 뜻.
+- `_exit(127)`: exec 실패 시 자식 종료 (버퍼를 비우지 않음).
+- `waitpid`: 특정 자식을 기다려 상태를 받는다.
+- `WIFEXITED`: 빈칸 정답. 정상 종료 검사.
+- `WEXITSTATUS`: 빈칸 정답. 종료 코드 꺼내기.
+- `ls /nope`: 없는 경로라 ls 가 종료 코드 2 로 끝나는 명령.
+
+@@ linux-d1-sec7-1
+좀비 프로세스를 만든다.
+- 자식은 메시지를 찍고 바로 `exit(7)` 로 끝난다.
+- 부모는 20초 동안 wait 하지 않고 sleep 한다. 그동안 자식은 종료 상태를 아직 아무도 안 가져간 좀비(Z)다.
+- 20초 뒤 `waitpid` 로 수거하면 좀비가 사라지고 종료 코드 7 을 출력한다. 마지막 sleep(5) 는 수거 뒤 ps 로 다시 확인할 시간이다.
+`fflush(stdout)` 는 백그라운드 실행에서도 메시지가 바로 보이게 한다.
+
+@@ linux-d1-sec7-4
+고아 프로세스를 만든다. 부모가 1초 뒤 먼저 끝나면, 3초 자고 있던 자식의 `getppid()` 가 바뀐다. 처음에는 부모 PID 였다가 고아가 된 뒤에는 init(PID 1, /sbin/init = systemd) 또는 subreaper 가 입양한 PID 가 나온다. 부모가 먼저 끝나서 프롬프트가 돌아온 뒤에 자식 출력이 이어진다.
+
+@@ linux-d1-sec7-5
+`sigaction` 으로 SIGINT(Ctrl+C) 를 처리하고, SIGCHLD 로 끝난 자식을 자동 수거한다.
+- `g_int_count` 는 핸들러와 main 이 함께 쓰므로 `volatile sig_atomic_t` 다.
+- `on_sigint` 는 횟수를 늘리고 `write` 로 메시지를 찍는다. 핸들러 안에서는 printf 대신 async-signal-safe 함수만 쓴다.
+- `on_sigchld` 는 `waitpid(-1, NULL, WNOHANG)` 을 0 이 나올 때까지 반복해 끝난 자식을 모두 거둔다.
+- `struct sigaction` 을 memset 으로 0 으로 하고 `sigemptyset(&sa.sa_mask)` 후 sa_handler 를 넣어 등록한다. SIGCHLD 에는 `SA_RESTART` 를 줘서 시그널에 끊긴 시스템 콜을 자동 재시작한다.
+- 자식 하나를 2초 뒤 끝나게 만들고, main 은 `pause()` 로 시그널을 기다리다 Ctrl+C 3번이면 끝난다.
+
+@@ linux-d1-sec7-6
+Ctrl+C 를 세 번 받으면 끝나는 프로그램의 빈칸 채우기다.
+- 빈칸 ① `sig_atomic_t`: 핸들러와 공유하는 변수 타입 (volatile 과 함께).
+- 빈칸 ② `write`: 핸들러 안에서 쓸 수 있는 async-signal-safe 출력.
+- 빈칸 ③ `on_sigint`: 핸들러 함수 이름.
+- 빈칸 ④ `sigaction`: 핸들러 등록 함수.
+- 빈칸 ⑤ `SIGINT`: Ctrl+C 시그널.
+- 빈칸 ⑥ `pause`: 시그널이 올 때까지 잠들고, 핸들러가 끝나면 -1 로 돌아온다.
+
+@@ linux-d1-sec7-8
+자식 5개를 SIGCHLD 핸들러로 모두 거두는 빈칸 채우기다.
+- 빈칸 ① `-1`: 아무 자식이나.
+- 빈칸 ② `WNOHANG`: 끝난 자식이 없으면 기다리지 않고 0. while 로 반복해 동시에 끝난 자식까지 모두 거둔다 (같은 시그널은 겹치면 한 번만 올 수 있다).
+- 빈칸 ③ `SIGCHLD`: 자식 종료 알림 시그널.
+
+@@ linux-d1-sec7-t1
+대표 시그널 표다.
+- SIGINT(2): Ctrl+C, 기본 동작 종료.
+- SIGKILL(9): `kill -9`, 종료. 잡을 수 없다.
+- SIGTERM(15): `kill` 기본값, 종료 요청.
+- SIGCHLD(17): 자식이 끝났을 때 부모에게, 기본 동작 무시.
+
+@@ linux-d1-sec7-p7-3
+좀비 · 시그널을 확인하는 괄호 넣기다.
+1. 좀비는 ps STAT 에 Z(<defunct>)로 보인다.
+2. 부모가 wait 해야 좀비가 사라진다.
+3. 핸들러로 잡을 수 없는 종료 시그널은 SIGKILL (SIGSTOP 도 잡을 수 없다).
+4. 자식이 끝나면 부모에게 SIGCHLD 가 간다.
+
+@@ linux-d1-sec7-inline
+7교시(좀비 · 고아 · 시그널) 본문에 나온 코드 조각이다.
+- `<defunct>`: ps 에 보이는 좀비 표시.
+- `wait`: 부모가 자식 종료 상태를 거두는 호출.
+- `src/07_zombie.c`: 예제 07 좀비 소스.
+- `ps`: 프로세스 목록 명령.
+- `ps -ef | grep 07_zombie`: 다른 창에서 좀비 찾기.
+- `waitpid`: 좀비를 수거하는 호출.
+- `src/08_orphan.c`: 예제 08 고아 소스.
+- `ps -p 1 -o cmd`: PID 1 의 명령 이름 확인.
+- `/sbin/init`: PID 1 (systemd). 고아를 입양한다.
+- `systemd --user`: 데스크톱 Ubuntu 의 subreaper. 고아의 PPID 가 1 이 아닐 수 있다.
+- `SIGINT`: Ctrl+C 시그널 (2).
+- `SIGKILL`: 잡을 수 없는 강제 종료 (9).
+- `kill -9`: SIGKILL 보내기.
+- `SIGTERM`: 종료 요청 (15).
+- `kill`: 시그널 보내는 명령 (기본 SIGTERM).
+- `SIGCHLD`: 자식 종료 알림 (17).
+- `src/09_sigaction.c`: 예제 09 시그널 소스.
+- `printf`: 핸들러 안에서 쓰면 안 되는 함수.
+- `write`: 핸들러에서 쓸 수 있는 출력 시스템 콜.
+- `volatile sig_atomic_t`: 핸들러와 main 이 공유하는 변수 타입.
+- `waitpid(-1, NULL, WNOHANG)`: 끝난 자식을 기다리지 않고 거두기.
+- `sa.sa_handler`: sigaction 구조체의 핸들러 함수 필드.
+- `sigaction(SIGINT, &sa, NULL)`: SIGINT 핸들러 등록.
+- `pause()`: 시그널이 올 때까지 잠들기.
+- `waitpid(-1, …)`: -1 은 아무 자식이나.
+- `WNOHANG`: 끝난 자식이 없으면 바로 0 반환.
+
+@@ linux-d1-sec8-1
+셸의 기본 루프를 의사 코드로 보여 준다. 프롬프트 출력 → 한 줄 읽기 → 단어로 자르기 → cd · exit 같은 내장 명령은 셸이 직접 처리 → 아니면 fork 해서 자식은 execvp, 부모는 waitpid → 종료 코드 저장을 반복한다. cd 가 내장이어야 하는 이유는, 자식에서 chdir 하면 자식의 현재 디렉터리만 바뀌고 사라지기 때문이다. 셸 자신이 chdir() 을 호출해야 한다.
+
+@@ linux-d1-sec8-2
+Day 1 종합 실습 myshell 전체 코드다. fork-exec-wait 루프로 만든 미니 셸이다.
+- `parse()` 는 `strtok(line, " \t\n")` 으로 공백 · 탭 · 줄바꿈 기준으로 단어를 잘라 argv 에 담는다. 두 번째부터는 `strtok(NULL, …)` 으로 이어 자르고, 끝에 NULL 을 넣는다 (execvp 요구).
+- `signal(SIGINT, SIG_IGN)` 으로 셸 자신은 Ctrl+C 에 죽지 않는다.
+- 프롬프트에 직전 종료 코드 `last` 를 보여 주고, `fgets` 가 NULL(Ctrl+D)이면 끝낸다.
+- 내장 명령: `exit` 는 루프 종료, `cd` 는 인자(없으면 `getenv("HOME")`)로 셸 자신이 `chdir()` 한다. 실패하면 last = 1.
+- 그 밖에는 fork 하고, 자식은 `signal(SIGINT, SIG_DFL)` 로 Ctrl+C 반응을 되돌린 뒤 `execvp`. 실패하면 perror 후 `_exit(127)`.
+- 부모는 `waitpid` 후 정상 종료면 종료 코드, 시그널 종료면 bash 관례대로 `128 + 시그널 번호` 를 last 에 넣는다.
+
+@@ linux-d1-sec8-3
+myshell 실행 예다. `echo hi` 는 0, `ls /nope` 은 2 라 다음 프롬프트가 myshell[2]$ 가 된다. `cd /tmp` 후 `pwd` 가 /tmp 인 것으로 내장 cd 가 셸 자신의 위치를 바꿨음을 확인한다. `sleep 100` 중 Ctrl+C 를 누르면 자식만 SIGINT(2)로 죽어 128 + 2 = 130 이 표시되고, 셸은 살아 있다. `exit` 로 끝낸다.
+
+@@ linux-d1-sec8-5
+`strace -f` 로 myshell 과 자식까지 따라가며 `clone`(fork 의 실제 시스템 콜), `execve`(exec), `wait4`(waitpid) 호출만 골라 본다. 명령 하나마다 clone → execve → wait4 흐름이 보인다.
+
+@@ linux-d1-sec8-6
+myshell 핵심 루프를 줄인 minishell 의 빈칸 채우기다.
+- 빈칸 ① `SIG_IGN`: 셸 자신은 Ctrl+C 를 무시한다.
+- 빈칸 ② `NULL`: fgets 가 NULL 이면 Ctrl+D(EOF).
+- 빈칸 ③ `strtok`: 두 번째부터 첫 인자에 NULL 을 넣어 이어 자른다.
+- 빈칸 ④ `chdir`: cd 는 셸 프로세스가 직접 chdir 하는 내장 명령. 실패(-1)면 last = 1.
+- 빈칸 ⑤ `SIG_DFL`: 자식은 exec 전에 기본 동작으로 되돌려 Ctrl+C 에 정상적으로 죽게 한다.
+- 빈칸 ⑥ `128`: 시그널로 죽은 자식은 128 + 시그널 번호.
+
+@@ linux-d1-sec8-t1
+Day 1 정리표다.
+- 시스템 콜: 사용자 프로그램이 커널에 일을 부탁하는 유일한 문.
+- errno: 실패(-1)했을 때만 읽는 원인 번호.
+- /proc: 읽는 순간 커널이 만들어 주는 가상 파일.
+- fork: 한 번 호출, 두 번 반환 (자식 0, 부모 PID).
+- exec: 같은 PID 에 새 프로그램을 덮어씀.
+- wait: 자식 종료 상태 수거. 안 하면 좀비.
+- 시그널: 커널이 보내는 비동기 알림, sigaction 으로 처리.
+
+@@ linux-d1-sec8-p8-2
+myshell 을 확인하는 괄호 넣기다.
+1. cd 는 셸 자신이 `chdir` 해야 해서 내장 명령이다.
+2. execvp 인자 배열의 마지막은 NULL.
+3. SIGINT(2)로 죽은 자식은 128 + 2 = 130 으로 표시한다.
+
+@@ linux-d1-sec8-inline
+8교시(myshell) 본문에 나온 코드 조각이다.
+- `cd`: 셸이 직접 처리하는 내장 명령.
+- `chdir()`: 현재 디렉터리를 바꾸는 시스템 콜.
+- `src/myshell.c`: 종합 실습 소스.
+- `exit`: 셸을 끝내는 내장 명령.
+- `myshell[0]`: 직전 종료 코드 0 을 보여 주는 프롬프트.
+- `getcwd`: 현재 디렉터리 경로를 얻는 함수 (도전 과제: 프롬프트에 표시).
+- `SIGCHLD`: 백그라운드(&) 실행 도전 과제에서 좀비를 남기지 않게 처리할 시그널.
+- `open`: > 리다이렉션 도전 과제에서 출력 파일을 여는 호출.
+- `dup2(fd, 1)`: 연 파일을 fd 1(표준 출력) 자리에 복제해 리다이렉션한다 (Day 4 예고).
+- `SIG_IGN`: 시그널 무시.
+- `SIG_DFL`: 시그널 기본 동작.
+- `fgets`: 한 줄 입력. NULL 이면 Ctrl+D.
+- `NULL`: 인자 배열 끝, strtok 이어 자르기 인자.
+- `strtok`: 문자열을 구분자로 자르는 함수.
+- `chdir`: 빈칸 정답. 셸 위치를 바꾼다.
+
+@@ linux-d1-src-01_write_vs_printf.c
+예제 01 원본 소스 파일이다. `write(1, …)` 은 바로 커널에 쓰고, `printf` 5줄은 stdio 버퍼에 쌓였다가 write 로 나간다. 터미널이면 줄 단위, 파이프 · 파일이면 블록 단위 버퍼링이라 파이프로 보내면 printf 5줄이 write 한 번으로 합쳐지고 write 문장보다 늦게 나온다. return 0 으로 끝나도 exit 과정에서 fflush 된다. `strace -e trace=write` 와 `strace -c` 로 관찰한다.
+
+@@ linux-d1-src-02_syscall_direct.c
+예제 02 원본 소스 파일이다. glibc 래퍼 `getpid()` 와 `syscall(SYS_getpid)` 직접 호출이 같은 값을 돌려주는 것, 그리고 `SYS_getpid`(39) · `SYS_write`(1) 번호를 출력한다. `syscall(SYS_write, 1, …)` 로 write 도 직접 부른다. `_GNU_SOURCE` 와 `<sys/syscall.h>` 가 필요하다.
+
+@@ linux-d1-src-03_errno.c
+예제 03 원본 소스 파일이다. `try_open()` 이 open 실패 시 `errno` 와 `strerror(errno)` 를 출력한다. /etc/hostname 성공, /no/such/file ENOENT, /etc/shadow EACCES(일반 사용자), /etc 쓰기 EISDIR, `close(100)` 은 EBADF 를 `perror` 로 보여 준다. errno 는 실패했을 때만 읽는다.
+
+@@ linux-d1-src-04_proc_self.c
+예제 04 원본 소스 파일이다. `read_status()` 가 /proc/self/status 를 fgets 로 한 줄씩 읽어 "키:" 로 시작하는 줄의 값을 꺼낸다 (콜론 뒤 공백 건너뛰기, `strcspn` 으로 줄바꿈 제거). main 은 Name · State · Pid · PPid · Threads · VmRSS 를 출력하고, 50MB 를 malloc 한 뒤 memset 으로 실제로 써서 VmRSS 가 늘어나는 것을 보여 준다. 쓰지 않으면 RSS 가 거의 안 는다 (Day 3 demand paging).
+
+@@ linux-d1-src-05_fork_basic.c
+예제 05 원본 소스 파일이다. fork 전에 fflush 로 버퍼를 비우고, 반환값으로 자식(0)과 부모(자식 PID)를 나눈다. 자식은 x+1, 부모는 x-1 해서 서로 다른 값이 나오므로 fork 뒤 메모리가 따로임(Copy-on-Write)을 보여 준다. 부모는 `wait(NULL)` 로 자식을 거둔 뒤 출력한다.
+
+@@ linux-d1-src-06_fork_exec_wait.c
+예제 06 원본 소스 파일이다. 인자가 있으면 그 명령을, 없으면 `ls -l /tmp` 를 자식에서 `execvp` 로 실행한다. exec 실패면 `_exit(127)`. 부모는 `waitpid` 후 `WIFEXITED`/`WEXITSTATUS` 로 종료 코드, `WIFSIGNALED`/`WTERMSIG` 로 시그널 번호를 출력한다.
+
+@@ linux-d1-src-07_zombie.c
+예제 07 원본 소스 파일이다. 자식은 바로 `exit(7)`, 부모는 20초 동안 wait 하지 않아 그동안 자식이 좀비(Z)로 남는다. 20초 뒤 `waitpid` 로 거두면 좀비가 사라지고 종료 코드 7 을 출력한다. `./07_zombie &` 후 `ps -o pid,ppid,stat,cmd --ppid $!` 로 관찰한다.
+
+@@ linux-d1-src-08_orphan.c
+예제 08 원본 소스 파일이다. 부모는 1초 뒤 자식을 기다리지 않고 끝나고, 3초 자는 자식은 그 사이 고아가 되어 `getppid()` 가 init(1) 또는 subreaper 로 바뀐다.
+
+@@ linux-d1-src-09_sigaction.c
+예제 09 원본 소스 파일이다. sigaction 으로 SIGINT 핸들러(횟수 증가 + write)와 SIGCHLD 핸들러(`waitpid(-1, NULL, WNOHANG)` 반복으로 모든 자식 수거, SA_RESTART)를 등록한다. 2초 뒤 끝나는 자식은 SIGCHLD 핸들러가 거두고, main 은 `pause()` 로 기다리다 Ctrl+C 3번이면 끝난다. 공유 변수는 `volatile sig_atomic_t`.
+
+@@ linux-d1-src-Makefile
+Day 1 공통 Makefile 원본이다. `$(wildcard *.c)` 로 모든 소스를 찾고 `$(SRCS:.c=)` 로 실행 파일 이름을 만든다. 패턴 규칙 `%: %.c` 의 명령 `$(CC) $(CFLAGS) -o $@ $<` 가 각 파일을 빌드한다 (-Wall -Wextra -g). `make clean` 은 실행 파일을 지우고, `.PHONY` 로 all · clean 이 파일이 아님을 알린다.
+
+@@ linux-d1-src-check_env.sh
+환경 점검 스크립트 원본(src 폴더 판)이다. 강의 본문 판과 비슷하게 배포판 · 커널, 코어 수(2 이상 권장)와 가상화 종류, WSL 여부(/proc/version 에 microsoft 면 Day 4 모듈 실습은 대체 과제), `mokutil --sb-state` 로 Secure Boot, sudo 권한, 필수 도구(gcc · make · gdb · strace · valgrind · perf · stress-ng)를 [ OK ] / [WARN] 으로 보여 주고 설치 명령을 안내한다.
+
+@@ linux-d1-src-myshell.c
+종합 실습 myshell 원본 소스 파일이다. `parse()` 가 strtok 으로 한 줄을 argv 로 자르고 끝에 NULL 을 둔다. 셸은 SIGINT 를 무시하고, 프롬프트에 직전 종료 코드를 보여 주며, Ctrl+D(fgets NULL)에서 끝난다. `exit` · `cd`(chdir, 인자 없으면 HOME)는 내장 명령으로 직접 처리하고, 나머지는 fork → 자식은 SIGINT 를 기본으로 되돌리고 execvp(실패 시 127) → 부모는 waitpid 로 종료 코드나 128 + 시그널 번호를 기록한다.
+
+@@ linux-d1-src-run.sh
+반복 측정 스크립트 원본이다. 인자가 2개 미만이면 사용법을 출력하고, 프로그램을 N회 실행하며 `date +%s%N` 전후 차이를 ms 로 바꿔 "run,elapsed_ms" CSV 에 쌓는다. 출력 파일 이름은 셋째 인자, 없으면 result.csv 이고, 끝에 결과를 cat 으로 보여 준다.

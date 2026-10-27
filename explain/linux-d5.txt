@@ -1,0 +1,330 @@
+@@ linux-d5-intro-t1
+Day 5 시간표다. 1교시 쓰레드 기초, 2교시 race condition, 3교시 mutex 와 교착, 4교시 조건 변수, 5교시 세마포어와 atomic, 6교시 쓰레드와 스케줄링 · 캐시, 7교시 종합 실습 edge_pipeline, 8교시 결과 발표 · 5일 정리 순서이고, 교시마다 D5-1~D5-8 애니메이션이 짝지어져 있다.
+
+@@ linux-d5-pdf-p1-1
+Day 5 표지 슬라이드 예시다. 주제는 쓰레드 · 동기화와 5일 종합(결과물 edge_pipeline.c)이다. `./02_race 2 1000000 none` 은 보호 없이 두 쓰레드가 100만 번씩 더해 200만 대신 100만만 남고(100만 잃어버림), mutex 모드는 정확히 200만이 된다.
+
+@@ linux-d5-pdf-p2-1
+오늘의 도착점 슬라이드의 빌드 줄이다. 모든 예제는 `gcc -Wall -Wextra -g -O1 -pthread … -lm` 으로 빌드한다(Makefile 에 포함). `-pthread` 는 쓰레드 라이브러리, `-lm` 은 수학 라이브러리를 연결한다. 쓰레드는 `ps -L` 이나 `/proc/PID/task` 로 확인한다.
+
+@@ linux-d5-intro-inline
+- `src/`: 예제 소스 폴더.
+- `make 이름`: 그 이름의 예제 하나만 빌드한다.
+- `animation.html`: 교시별 개념 애니메이션 페이지.
+
+@@ linux-d5-sec1-1
+예제 01 `01_threads.c` 다. 전역 변수 g_value 를 쓰레드 세 개가 각각 10씩 더하며 PID · TID(`gettid`) · g_value 의 주소와 값을 출력한다. `pthread_create` 로 만들고 `pthread_join` 으로 기다려 worker 가 malloc 해 돌려준 반환값(id × 100)을 회수한다. 끝으로 `fork` 한 자식이 g_value 에 1000 을 더해도 부모 값은 그대로임을 보여 쓰레드(공유)와 프로세스(복사)를 비교한다. fork 전 `fflush(stdout)` 은 stdio 버퍼가 자식에게 복사되지 않게 한다.
+
+@@ linux-d5-sec1-2
+예제 01 실행 명령이다. 실행 중에 두 번째 PuTTY 창에서 `ps -L -p $(pgrep 01_threads)` 로 쓰레드 목록(LWP 열이 TID)을, `ls /proc/$(pgrep 01_threads)/task` 로 쓰레드마다 생긴 디렉터리를 본다.
+
+@@ linux-d5-sec1-3
+예제 01 기대 출력이다. 세 쓰레드는 PID 가 같고 TID 만 다르며, g_value 의 주소도 같아 값이 10 → 20 → 30 으로 쌓인다. join 으로 반환값 100 · 200 · 300 을 받는다. fork 자식은 1030 이 되지만 부모는 30 그대로다.
+
+@@ linux-d5-sec1-4
+쓰레드를 만들고 회수하는 빈칸 채우기다.
+- 빈칸 ① `pthread.h`: 쓰레드 함수들이 선언된 헤더.
+- 빈칸 ② `pthread_create`: 새 쓰레드에서 함수를 실행한다.
+- 빈칸 ③ `worker`: 새 쓰레드가 실행할 함수.
+- 빈칸 ④ `pthread_join`: 쓰레드가 끝날 때까지 기다리고 return 한 포인터를 받는다. join 하지 않으면 종료된 쓰레드의 자원이 남는다.
+
+@@ linux-d5-sec1-t1
+프로세스와 쓰레드 비교표다. fork 한 프로세스는 주소 공간이 따로(COW)이고 PID 로 구분하며, 페이지 테이블을 복사해 만들고 파이프 · 공유 메모리로 통신한다. 쓰레드는 전역 · 힙 · 열린 파일을 공유하고 스택 · 레지스터만 따로이며, 같은 PID 에 TID 로 구분하고, 스택만 새로 만들어 가볍고, 그냥 변수로 통신하지만 동기화가 필요하다.
+
+@@ linux-d5-sec1-p1-2
+1. 쓰레드는 `pthread_create` 로 만든다.
+2. 같은 프로세스의 쓰레드는 PID 가 같고 TID 가 다르다.
+3. 쓰레드 프로그램은 gcc 에 `-pthread` 를 준다.
+4. 주소 공간을 공유하므로 전역 변수도 공유한다.
+
+@@ linux-d5-sec1-inline
+- `edge_pipeline.c`: 오후에 완성할 5일 종합 프로그램.
+- `src/01_threads.c`: 쓰레드의 주소 공간 공유를 fork 와 비교하는 예제.
+- `fflush(stdout)`: stdio 버퍼를 비운다. fork 전에 해야 출력이 두 번 찍히지 않는다.
+- `./01_threads | cat`: 파이프로 실행하면 stdout 이 완전 버퍼링이 되어 fflush 를 빼면 앞부분이 두 번 찍힌다.
+- `<pthread.h>`: POSIX 쓰레드 헤더.
+- `pthread_create(&th, NULL, worker, arg)`: 새 쓰레드에서 worker(arg) 를 실행한다.
+- `pthread_join(th, &r)`: 쓰레드 th 가 끝나길 기다리고 반환값을 r 에 받는다.
+- `-pthread`: 쓰레드 지원을 켜는 gcc 옵션.
+- `/proc/PID/task`: 프로세스의 쓰레드마다 디렉터리가 있는 곳.
+- `worker(arg)`: 새 쓰레드가 실행하는 함수 호출 모양.
+
+@@ linux-d5-sec2-1
+`counter++` 가 사라지는 과정이다. counter++ 는 읽기 → 더하기 → 쓰기 세 단계라, A 와 B 가 둘 다 5 를 읽고 각각 6 을 쓰면 두 번 더했는데 6 이 된다. 결과가 실행 순서에 따라 달라지는 이런 상황이 race condition 이고, 공유 데이터를 고치는 구간을 임계 구역이라 한다.
+
+@@ linux-d5-sec2-2
+예제 02 `02_race.c` 다. 쓰레드 수 · 반복 횟수 · 모드를 받아 공유 counter 를 증가시킨다. none 은 보호 없이(`add_none` 은 noinline 이라 기계어를 objdump 로 볼 수 있다), mutex 는 `pthread_mutex_lock/unlock`, atomic 은 `__atomic_fetch_add`, spin 은 `pthread_spin_lock` 으로 보호한다. counter 는 volatile 이라 매번 메모리에서 읽고 써 race 가 잘 드러난다. 끝나면 기대값 · 실제값 · 잃어버린 수 · 걸린 시간을 출력한다.
+
+@@ linux-d5-sec2-3
+예제 02 실행 명령이다. none 모드를 여러 번 실행하면 결과가 매번 다르다. `objdump -d --no-show-raw-insn` 으로 add_none 함수의 기계어를 보면 counter++ 가 mov(읽기) · add(더하기) · mov(쓰기) 세 명령임을 확인할 수 있다.
+
+@@ linux-d5-pdf-p4-1
+2교시 슬라이드 장면이다. counter++ 의 기계어(mov 읽기 · add 더하기 · mov 쓰기)와 none 모드 실행 결과를 보여 준다. 100만 번씩은 실행마다 100만을 잃기도 하고 0 을 잃기도 하며, 2000만 번씩 하면 4000만 중 약 1376만을 잃는다.
+
+@@ linux-d5-sec2-4
+예제 02 none 모드 출력과 기계어다. 100만 번씩 두 쓰레드는 실행마다 결과가 다르고(100만 잃음 또는 0), 2000만 번씩은 1376만을 잃는다. objdump 로 본 add_none 은 `mov`(메모리에서 읽기) · `add $0x1`(더하기) · `mov`(메모리에 쓰기) 세 명령이라 사이에 다른 쓰레드가 끼어들 수 있다.
+
+@@ linux-d5-sec2-5
+보호 없는 카운터 빈칸 채우기다.
+- 빈칸 ① `++`: counter++ 는 읽기 · 더하기 · 쓰기 세 단계라 다른 쓰레드가 끼어들 수 있다.
+- 빈칸 ② `NULL`: 쓰레드 함수는 void * 를 돌려줘야 해 결과가 없으면 NULL.
+- 빈칸 ③ `expect`: 잃어버린 개수 = 기대값 − 실제 counter.
+
+@@ linux-d5-sec2-p2-2
+1. 실행 순서에 따라 결과가 달라지는 버그가 race condition 이다.
+2. 공유 데이터를 고치는 구간이 임계 구역이다.
+3. counter++ 는 읽기 · 더하기 · 쓰기 세 단계다.
+4. CPU 가 1개여도 읽은 직후 선점되면 값이 사라져 race 가 난다.
+
+@@ linux-d5-sec2-inline
+- `counter++`: 공유 카운터 증가. 원자적이지 않다.
+- `src/02_race.c`: race 를 재현하고 네 가지 방식으로 비교하는 예제.
+- `volatile`: 매번 메모리에서 읽고 쓰게 하는 한정자. 동기화 기능은 없다.
+- `addq $1, mem`: 메모리 값을 한 명령으로 1 더하는 기계어. 그래도 lock 없이는 CPU 사이에서 원자적이지 않다.
+- `lock`: x86 의 원자적 실행 접두어.
+- `void *`: 쓰레드 함수의 반환 · 인자 형.
+- `NULL`: 돌려줄 결과가 없을 때의 반환값.
+- `expect`: 기대 결과 = 쓰레드 수 × 반복 횟수.
+
+@@ linux-d5-sec3-1
+mutex 사용 모양이다. `pthread_mutex_lock` 을 먼저 잡은 쓰레드만 임계 구역(counter++)에 들어가고 나머지는 unlock 될 때까지 잠든다. 잠금 구간은 짧게 유지한다.
+
+@@ linux-d5-sec3-2
+예제 02 를 mutex 모드로 실행하는 명령이다. 결과가 정확히 기대값과 같은지, 시간은 얼마나 늘었는지 본다.
+
+@@ linux-d5-sec3-3
+mutex 모드 출력이다. 잃어버림 0 으로 정확하지만 39 ms 로 none(5.3 ms)보다 8배 느리다. 잠금 · 해제 비용과 경쟁 시 잠들었다 깨는 비용이 더해지기 때문이라, 오래 걸리는 계산 · I/O 는 잠금 밖으로 뺀다.
+
+@@ linux-d5-sec3-4
+교착(deadlock) 그림이다. t1 은 A 를 잡고 B 를, t2 는 B 를 잡고 A 를 기다려 둘 다 영원히 진행하지 못한다. mutex 두 개를 반대 순서로 잡았기 때문이다.
+
+@@ linux-d5-sec3-5
+예제 03 `03_deadlock.c` 다. t1 은 A → B 순서로, t2 는 기본이면 B → A, fixed 인자면 A → B 순서로 잡는다. 각각 첫 잠금 뒤 0.1초 쉬어 엇갈림을 일부러 만든다. `alarm(3)` 과 SIGALRM 핸들러가 감시자 역할을 해, 3초 안에 안 끝나면 교착이라고 알리고 `_exit(1)` 로 끝낸다(핸들러 안이라 printf 대신 write 사용).
+
+@@ linux-d5-sec3-6
+예제 03 실행 명령이다. 기본 실행은 멈췄다가 3초 뒤 감시자 메시지가 나오고, fixed 는 정상 종료한다. 멈춘 동안 다른 창에서 `gdb -p … -batch -ex "thread apply all bt"` 로 모든 쓰레드의 호출 스택을 보면 둘 다 lock 에서 기다리는 것이 보인다.
+
+@@ linux-d5-sec3-7
+예제 03 기본 실행 출력이다. t1 이 A, t2 가 B 를 잡은 뒤 서로 상대를 기다리고, 3초 뒤 감시자가 교착이라고 알린다.
+
+@@ linux-d5-sec3-8
+같은 순서로 잠가 교착을 피하는 빈칸 채우기다.
+- 빈칸 ① `PTHREAD_MUTEX_INITIALIZER`: 정적 mutex 초기화 값.
+- 빈칸 ② `A`: t1 과 같은 순서로 A 를 먼저 잡는다.
+- 빈칸 ③ `unlock`: 잡은 반대 순서(B 먼저)로 푼다.
+
+@@ linux-d5-sec3-p3-2
+1. 한 번에 한 쓰레드만 들어가게 하는 잠금이 mutex 다.
+2. 서로 상대의 잠금을 기다리며 멈춘 상태가 deadlock 이다.
+3. 모든 쓰레드가 같은 순서로 잠그면 교착을 막는다.
+4. 임계 구역이 길면 다른 쓰레드가 오래 기다린다.
+
+@@ linux-d5-pdf-p5-1
+3교시 슬라이드 장면이다. mutex 사용 모양과 교착 해결 원칙(같은 순서로 잠그기, 잠금 안에서 오래 걸리는 일 금지, 멈추면 gdb 로 모든 쓰레드 스택 보기)을 정리하고, 03_deadlock 의 교착 출력과 fixed 실행의 정상 종료를 보여 준다.
+
+@@ linux-d5-sec3-inline
+- `pthread_mutex_lock`: mutex 를 잡는다. 이미 잡혀 있으면 잠든다.
+- `unlock`: 잠금 해제.
+- `src/03_deadlock.c`: 교착을 재현하는 예제.
+- `pthread_mutex_trylock`: 잡을 수 없으면 기다리지 않고 바로 실패를 돌려준다.
+- `PTHREAD_MUTEX_INITIALIZER`: 정적 mutex 초기화 매크로.
+- `pthread_mutex_unlock`: mutex 를 푼다.
+
+@@ linux-d5-sec4-2
+예제 04 실행 명령이다. 기본은 소비자가 느린 경우, `fastcons` 는 생산자가 느린 경우로, 어느 쪽이 기다리는지 비교한다.
+
+@@ linux-d5-src-Makefile
+Day 5 공통 Makefile 이다. 모든 .c 를 `-Wall -Wextra -g -O1 -pthread` 로 컴파일하고 `-lm`(수학 라이브러리)을 연결해 같은 이름의 실행 파일로 만든다. `make clean` 으로 지운다.
+
+@@ linux-d5-sec4-1
+예제 04 `04_prodcons.c` 다. 8칸 링 버퍼(buf · head · tail · count)를 mutex m 과 조건 변수 not_full · not_empty 로 보호한다. 생산자는 1~40 을 넣는데 가득 차면(`count == CAP`) `pthread_cond_wait(&not_full, &m)` 으로 잠들고, 넣은 뒤 `pthread_cond_signal(&not_empty)` 로 소비자를 깨운다. 소비자는 비었으면 not_empty 에서 기다리고 꺼낸 뒤 not_full 로 생산자를 깨워 합계를 낸다. 조건은 if 가 아니라 while 로 다시 확인하고, 기다린 횟수를 세어 출력한다. fastcons 인자면 생산자 쪽을 느리게 만든다.
+
+@@ linux-d5-sec4-3
+예제 04 기대 출력이다. 두 경우 모두 합계 820(1~40 의 합)으로 정확하다. 소비자가 느리면 생산자가 '가득 참' 에서 32번 기다리고, 생산자가 느리면 소비자가 '비어 있음' 에서 40번 기다린다. 느린 쪽이 아니라 빠른 쪽이 기다리며, 기다리는 동안 CPU 는 0% 다.
+
+@@ linux-d5-sec4-4
+소비자가 링 버퍼에서 꺼내는 빈칸 채우기다.
+- 빈칸 ① `while`: 깨어난 사이 다른 쓰레드가 가져갔거나 이유 없이 깼을 수 있어 조건을 다시 확인한다.
+- 빈칸 ② `pthread_cond_wait`: mutex 를 풀고 잠들었다가 깨면 다시 잡고 돌아온다.
+- 빈칸 ③ `CAP`: 인덱스를 버퍼 크기로 나머지 연산해 원형으로 돌린다.
+- 빈칸 ④ `signal`: 한 칸이 비었으니 기다리는 생산자 하나를 깨운다.
+
+@@ linux-d5-sec4-t1
+조건 변수 함수 표다. `pthread_cond_wait(&c, &m)` 은 m 을 풀고 잠들었다가 깨어나면 m 을 다시 잡고 돌아온다. `pthread_cond_signal(&c)` 는 c 에서 기다리는 쓰레드 하나를, `pthread_cond_broadcast(&c)` 는 모두를 깨운다(종료 알림 등).
+
+@@ linux-d5-sec4-p4-2
+1. 조건이 맞을 때까지 잠드는 도구가 조건 변수다.
+2. cond_wait 은 함께 넘긴 mutex 를 풀고 잠든다.
+3. 모두 깨우는 함수는 `pthread_cond_broadcast` 다.
+4. 깨어난 뒤 조건을 while 로 다시 확인한다.
+
+@@ linux-d5-pdf-p6-1
+4교시 슬라이드의 소비자 코드다. mutex 를 잡고 `while (count == 0)` 동안 not_empty 에서 기다렸다가, 값을 꺼내 head 를 원형으로 옮기고 count 를 줄인 뒤 not_full 로 생산자를 깨우고 mutex 를 푼다. cond_wait · signal · broadcast 의 역할도 함께 정리했다.
+
+@@ linux-d5-sec4-inline
+- `pthread_cond_wait(&c, &m)`: m 을 풀고 c 에서 잠들었다가 깨면 m 을 다시 잡는다.
+- `pthread_cond_signal(&c)`: c 에서 기다리는 쓰레드 하나를 깨운다.
+- `pthread_cond_broadcast(&c)`: c 에서 기다리는 쓰레드 모두를 깨운다.
+- `while`: 깨어난 뒤 조건을 다시 확인하는 반복문.
+- `src/04_prodcons.c`: 생산자 · 소비자 예제.
+- `pthread_cond_wait`: 조건 변수에서 잠드는 함수.
+- `CAP`: 링 버퍼 크기 (8).
+- `pthread_cond_signal(&not_full)`: 자리가 생겼다고 생산자에게 알린다.
+
+@@ linux-d5-sec5-1
+예제 05 `05_sem.c` 다. 세마포어 slots 를 `sem_init(&slots, 0, 2)` 로 초기값 2 로 만들어(0 = 쓰레드끼리 공유), 가속기 2개를 쓰레드 5개가 나눠 쓰는 상황을 흉내 낸다. 각 작업은 `sem_wait` 로 자리를 얻고(0 이면 기다림), mutex 로 보호한 active 카운터로 동시 실행 수와 최대값을 기록하며 0.2초 쓴 뒤 `sem_post` 로 자리를 반납한다. 끝에 최대 동시 실행 수를 출력하고 `sem_destroy` 한다.
+
+@@ linux-d5-sec5-2
+예제 05 기대 출력이다. 작업 1 · 2 가 먼저 시작해 동시 실행 2 가 되고, 하나가 끝나야 3 이 시작한다. 최대 동시 실행은 세마포어 초기값과 같은 2 다.
+
+@@ linux-d5-sec5-3
+예제 02 를 네 모드로 연달아 실행하는 셸 반복문이다. none · mutex · spin · atomic 의 정확성과 시간을 한눈에 비교한다.
+
+@@ linux-d5-sec5-4
+세마포어로 동시 실행을 제한하는 빈칸 채우기다.
+- 빈칸 ① `semaphore.h`: 세마포어 함수 헤더.
+- 빈칸 ② `sem_wait`: 값을 1 줄이되 0 이면 기다린다.
+- 빈칸 ③ `sem_post`: 값을 1 늘리며 기다리던 쓰레드를 깨운다 (자리 반납).
+- 빈칸 ④ `2`: 동시에 들어갈 수 있는 수 (초기값).
+
+@@ linux-d5-sec5-t1
+보호 방식 비교표다. none 은 5 ms 로 빠르지만 틀린다. mutex(39 ms)는 경쟁하면 잠들어 임계 구역이 길 때 알맞다. spinlock(36 ms)은 경쟁하면 계속 돌며 기다려 아주 짧은 구간이나 커널 안에서 쓴다. atomic(13 ms)은 가장 빠르지만 변수 하나의 단순 연산에만 쓸 수 있다.
+
+@@ linux-d5-sec5-t2
+동기화 도구 선택표다. 여러 변수를 함께 고치는 구간은 mutex, "~가 될 때까지" 기다리기는 조건 변수(mutex 와 짝), 개수 제한 · 신호 횟수 세기는 세마포어, 카운터 · 플래그 하나는 atomic 을 쓴다.
+
+@@ linux-d5-sec5-p5-2
+1. 1 줄이고 0 이면 기다리는 함수는 `sem_wait` 다.
+2. 초기값 2 면 동시에 2개까지 들어간다.
+3. 변수 하나의 단순 연산은 atomic 으로 잠금 없이 안전하게 한다.
+4. 경쟁할 때 잠들지 않고 돌며 기다리는 잠금이 spinlock 이다.
+
+@@ linux-d5-sec5-inline
+- `sem_wait`: 세마포어를 1 줄이고 0 이면 기다린다.
+- `sem_post`: 세마포어를 1 늘리고 기다리던 쓰레드를 깨운다.
+- `src/05_sem.c`: 세마포어로 동시 사용 수를 제한하는 예제.
+- `lock add`: x86 의 원자적 덧셈 명령.
+- `__atomic_fetch_add`: gcc 내장 원자적 덧셈 함수.
+- `<stdatomic.h>`: C11 표준 원자 연산 헤더.
+- `<semaphore.h>`: POSIX 세마포어 헤더.
+- `sem_init(&slots, 0, 2)`: 쓰레드끼리 공유(0)하는 초기값 2 세마포어를 만든다.
+
+@@ linux-d5-sec6-1
+예제 06 `06_false_sharing.c` 다. 두 변수를 같은 캐시 라인에 둔 구조체 together(a, b 가 8바이트 차이)와, 패딩으로 64바이트 떨어뜨린 apart(aligned(64))를 만든다. `spin_add` 쓰레드는 `pthread_setaffinity_np` 로 자기를 CPU 0 또는 1 에 고정하고 자기 변수만 2억 번 증가시킨다. `run` 이 두 쓰레드의 걸린 시간을 재, 같은 줄일 때와 떨어뜨렸을 때를 비교 출력한다. CPU 가 1개면 차이가 없다고 알린다.
+
+@@ linux-d5-sec6-2
+예제 06 출력 예시(vCPU 2개 VM)다. T.a · T.b 는 거리 8 B 로 같은 캐시 라인이라 905 ms, P.a · P.b 는 64 B 떨어져 252 ms 로 3.6배 빠르다. 서로 다른 변수인데도 같은 64바이트에 있으면 캐시 라인이 두 CPU 사이를 오가 느려진다(false sharing).
+
+@@ linux-d5-sec6-3
+쓰레드 CPU 고정과 캐시 줄 분리 빈칸 채우기다.
+- 빈칸 ① `_GNU_SOURCE`: pthread_setaffinity_np 는 GNU 확장이라 필요하다.
+- 빈칸 ② `64`: 캐시 줄 크기. a 뒤에 64 − sizeof(long) 바이트를 채우면 b 가 다음 줄로 간다.
+- 빈칸 ③ `pthread_setaffinity_np`: 쓰레드 하나의 CPU 를 고정한다.
+- 빈칸 ④ `pthread_self`: 지금 실행 중인 쓰레드 자신.
+
+@@ linux-d5-sec6-t1
+쓰레드별 정책 설정 표다. `pthread_setaffinity_np(th, size, &set)` 은 그 쓰레드의 CPU affinity 를, `pthread_setschedparam(th, SCHED_FIFO, &sp)` 는 그 쓰레드의 정책 · 우선순위(sudo 필요)를 정한다. `ps -L -o tid,cls,rtprio,psr,comm -p PID` 로 쓰레드별 정책(CLS) · 우선순위 · 실행 CPU(PSR)를 확인한다.
+
+@@ linux-d5-sec6-p6-2
+1. 쓰레드 하나의 CPU 는 `pthread_setaffinity_np` 로 고정한다.
+2. 캐시 줄은 64 바이트다.
+3. 다른 변수가 같은 줄에 있어 느려지는 것이 false sharing 이다.
+4. `ps -L` 로 쓰레드별 정책과 실행 CPU 를 본다.
+
+@@ linux-d5-pdf-p8-1
+6교시 슬라이드 장면이다. 쓰레드마다 정책 · CPU 를 정하는 함수(pthread_setaffinity_np · pthread_setschedparam)와 확인 명령(`ps -L -o tid,cls,rtprio,psr`)을 정리하고, false sharing 예시(같은 라인 905 ms 대 64B 분리 252 ms, 3.6배)를 보여 준다.
+
+@@ linux-d5-sec6-inline
+- `pthread_setaffinity_np(th, size, &set)`: 쓰레드 th 의 CPU affinity 를 정한다.
+- `pthread_setschedparam(th, SCHED_FIFO, &sp)`: 쓰레드 th 의 정책 · 우선순위를 정한다.
+- `ps -L -o tid,cls,rtprio,psr,comm -p PID`: 쓰레드별 TID · 정책 · RT 우선순위 · 실행 CPU · 이름을 보여 준다.
+- `src/06_false_sharing.c`: false sharing 을 재는 예제.
+- `__attribute__((aligned(64)))`: 변수를 64바이트 경계에 맞춰 캐시 줄을 나눈다.
+- `pthread_setaffinity_np`: 쓰레드 CPU 고정 함수 (np = 비표준 GNU 확장).
+- `_GNU_SOURCE`: GNU 확장 함수를 쓰기 위한 정의.
+- `64 - sizeof(long)`: 패딩 크기. b 를 다음 캐시 줄로 민다.
+- `pthread_self()`: 현재 쓰레드의 ID.
+- `ps`: 프로세스 목록 명령.
+- `-o tid,cls,rtprio,psr`: ps 에서 보여 줄 열 지정.
+- `ps -L`: 쓰레드(LWP)까지 한 줄씩 보여 준다.
+
+@@ linux-d5-sec7-1
+edge_pipeline 구조 그림이다. 센서 쓰레드가 10 ms 절대 주기로 가상 센서 값을 만들고(Day 2: clock_nanosleep · FIFO · CPU 고정), 64칸 링 버퍼(mutex + 조건 변수)로 처리 쓰레드에 넘긴다. 처리 쓰레드는 이동 평균 10개와 임계치 알람을 계산하고(계산은 잠금 밖), 1초 통계를 기록 쓰레드가 CSV 한 줄로 쓰며 fsync 한다(Day 4). main 은 mlockall · SIGINT 정상 종료 · getopt 를 맡는다(Day 3 · Day 1).
+
+@@ linux-d5-sec7-2
+종합 실습 `edge_pipeline.c` 다. 센서 쓰레드는 -r 이면 CPU 1 고정 + SCHED_FIFO 80 을 걸고, 10 ms 절대 주기로 깨어나 지연을 재며 2초 주기 사인파 + 잡음 값을 링 버퍼에 넣는다(가득 차면 가장 오래된 값을 버리고 dropped 증가). 처리 쓰레드는 `pthread_cond_wait` 로 값을 기다려 꺼낸 뒤 잠금 밖에서 이동 평균을 내고, 임계치를 넘으면 alarms 를 센다. 기록 쓰레드는 1초마다 통계를 복사 · 초기화해 CSV 에 쓰고 `fsync` 한다. main 은 getopt(-d 시간 · -r · -t 임계치 · -o 파일), -r 이면 mlockall, SIGINT 핸들러를 설정하고 시간이 다 되거나 Ctrl+C 면 g_stop 으로 모든 쓰레드를 끝내 join 한다. 종료 때 센서가 broadcast 로 처리 쓰레드를 깨운다.
+
+@@ linux-d5-sec7-3
+edge_pipeline 실행 명령이다. 일반 정책과 `sudo … -r`(FIFO + CPU 고정 + mlockall)로 10초씩 돌려 보고, `stress-ng --cpu 2 &` 로 부하를 건 상태에서 두 실행을 각각 다른 CSV 로 저장해 max_lat_us 를 비교한다. 끝나면 `kill %1` 로 부하를 끈다.
+
+@@ linux-d5-sec7-4
+edge_pipeline 출력 예시(3초, 일반 정책)다. 매초 샘플 약 100개(10 ms 주기), 평균값이 사인파를 따라 +0.6 / −0.6 으로 오가며, 최대 깨어남 지연은 약 200 µs, 평균이 임계치 0.8 을 넘은 알람 수가 찍힌다. 버린 값은 0 이고 Ctrl+C 없이도 정상 종료해 edge.csv 를 저장한다.
+
+@@ linux-d5-sec7-5
+센서 쓰레드가 값을 넣는 빈칸 채우기다.
+- 빈칸 ① `TIMER_ABSTIME`: 다음 10 ms 눈금(절대 시각)까지 잔다.
+- 빈칸 ② `CAP`: 버퍼가 가득 차면 가장 오래된 값을 버린다 (dropped).
+- 빈칸 ③ `signal`: 새 값이 들어왔다고 처리 쓰레드 하나를 깨운다.
+- 빈칸 ④ `unlock`: 링 버퍼 잠금을 푼다.
+
+@@ linux-d5-sec7-t1
+edge.csv 열 해석표다. samples 는 1초 동안 처리한 값으로 100 에 가까워야 한다(10 ms 주기). max_lat_us 는 센서가 늦게 깨어난 최대값으로 부하 + OTHER 에서 커지고 -r 이면 작다. alarms 는 이동 평균이 임계치를 넘은 횟수로 2초 주기 사인파라 1초씩 번갈아 생긴다. dropped 는 링 버퍼가 가득 차 버린 값으로 0 이어야 정상이다.
+
+@@ linux-d5-sec7-p7-2
+1. 센서 주기는 10 ms 다.
+2. 처리 쓰레드는 값만 꺼내고 잠금을 푼 뒤 잠금 밖에서 계산해 센서를 막지 않는다.
+3. 기록 쓰레드는 1초에 한 번만 `fsync` 한다.
+4. 종료할 때 `pthread_cond_broadcast` 로 cond_wait 에서 잠든 처리 쓰레드를 깨운다.
+
+@@ linux-d5-sec7-inline
+- `src/edge_pipeline.c`: 5일 종합 쓰레드 파이프라인 소스.
+- `-r`: 센서를 SCHED_FIFO 80 + CPU 고정 + mlockall 로 실행하는 옵션.
+- `TIMER_ABSTIME`: 절대 시각까지 자는 clock_nanosleep 플래그.
+- `CAP`: 링 버퍼 크기 (64).
+- `pthread_cond_signal`: 조건 변수에서 기다리는 쓰레드 하나를 깨운다.
+- `pthread_mutex_unlock`: mutex 를 푼다.
+
+@@ linux-d5-sec8-1
+edge_pipeline 종료 처리 빈칸 채우기다.
+- 빈칸 ① `sig_atomic_t`: 시그널 핸들러와 쓰레드가 함께 보는 플래그 형 (volatile 과 함께).
+- 빈칸 ② `SIGINT`: Ctrl+C 시그널.
+- 빈칸 ③ `pthread_join`: 플래그를 세운 뒤 쓰레드가 끝나길 하나씩 기다린다.
+
+@@ linux-d5-sec8-t1
+5일 정리표다. Day 1 시스템 콜 · 프로세스(myshell.c, 추론 서버를 fork · exec 로 띄우고 감시), Day 2 스케줄링(jitter.c, 센서 · 제어는 FIFO + 고정, 추론은 OTHER), Day 3 메모리(memlab.c, 모델은 mmap, 실시간 쓰레드는 mlockall), Day 4 파일 · sysfs(sysmon.c · mysysfs.ko, 장치 값은 sysfs, 로그는 필요한 곳만 fsync), Day 5 쓰레드 · 동기화(edge_pipeline.c, 수집 · 추론 · 기록을 쓰레드로 나누고 큐로 잇기)다.
+
+@@ linux-d5-sec8-t2
+Day 5 핵심 개념 한 줄 정리표다. 쓰레드(주소 공간 공유, TID), race condition(읽기-더하기-쓰기 사이 끼어듦), mutex(임계 구역은 짧게), deadlock(같은 순서로 잠금), 조건 변수(while 로 재확인), 세마포어(동시 N 개 제한), atomic(변수 하나는 잠금 없이), false sharing(64B 캐시 줄 나누기), edge_pipeline(5일 기법 종합)을 묶었다.
+
+@@ linux-d5-sec8-p8-2
+1. 종료 플래그는 `volatile sig_atomic_t` 로 선언한다.
+2. 쓰레드 회수는 `pthread_join` 이다.
+3. 실시간 쓰레드의 page fault 는 Day 3 의 `mlockall` 로 없앤다.
+4. 버퍼가 넘쳐 버린 값은 dropped 열에 남는다.
+
+@@ linux-d5-sec8-inline
+- `-r`: edge_pipeline 의 실시간 옵션. 조별 발표에서 부하 유무 × OTHER · -r 네 조합을 비교한다.
+- `volatile sig_atomic_t`: 시그널 핸들러에서 안전하게 쓰는 플래그 형.
+- `signal(SIGINT, on_sigint)`: Ctrl+C 를 받으면 on_sigint 를 부르게 등록한다.
+- `pthread_join`: 쓰레드가 끝날 때까지 기다린다.
+
+@@ linux-d5-src-01_threads.c
+예제 01 원본 파일이다. 쓰레드 세 개가 전역 g_value 를 공유하며 PID · TID · 주소를 출력하고 join 으로 반환값을 받는다. 이어서 fork 한 자식의 변경은 부모에게 보이지 않는 것을 비교한다.
+
+@@ linux-d5-src-02_race.c
+예제 02 원본 파일이다. 쓰레드 수 · 반복 횟수 · 모드(none · mutex · atomic · spin)를 받아 공유 counter 를 증가시키고, 기대값 · 실제값 · 잃어버린 수 · 시간을 출력한다.
+
+@@ linux-d5-src-03_deadlock.c
+예제 03 원본 파일이다. 두 쓰레드가 mutex A · B 를 반대 순서(fixed 면 같은 순서)로 잡고, alarm(3) 감시자가 3초 안에 안 끝나면 교착이라 알리고 끝낸다.
+
+@@ linux-d5-src-04_prodcons.c
+예제 04 원본 파일이다. 8칸 링 버퍼를 mutex 와 조건 변수 not_full · not_empty 로 보호해 생산자가 1~40 을 넣고 소비자가 꺼내 합한다. 어느 쪽이 몇 번 기다렸는지 출력한다.
+
+@@ linux-d5-src-05_sem.c
+예제 05 원본 파일이다. 초기값 2 세마포어로 쓰레드 5개 중 동시에 2개만 "가속기"를 쓰게 하고, 최대 동시 실행 수를 출력한다.
+
+@@ linux-d5-src-06_false_sharing.c
+예제 06 원본 파일이다. 같은 캐시 라인에 있는 두 변수와 64바이트 떨어뜨린 두 변수를 각각 CPU 0 · 1 에 고정한 두 쓰레드가 증가시켜 걸린 시간을 비교한다.
+
+@@ linux-d5-src-edge_pipeline.c
+edge_pipeline 원본 파일이다. 센서(10 ms 절대 주기, 선택적 FIFO + CPU 고정) → 64칸 링 버퍼 → 처리(이동 평균 · 임계치 알람) → 기록(1초마다 CSV + fsync) 3단 쓰레드 파이프라인이며, main 이 getopt · mlockall · SIGINT 종료 처리를 맡는다.
